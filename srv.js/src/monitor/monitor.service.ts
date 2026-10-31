@@ -6,8 +6,9 @@
  * The wanproxy.js monitor emits a single `codec` slot per proxy; this
  * service normalizes it onto the interfaceCodec/peerCodec shape the web UI
  * and the Go SRV use (role "outgoing" → interfaceCodec, "incoming" →
- * peerCodec).  wanproxy.js does not yet surface the per-codec byte counters,
- * so `stats` is absent and codecStats() reports zeros.
+ * peerCodec).  Codecs activated with `track_statistics` carry the four
+ * boundary byte counters in `stats`, which are passed through verbatim;
+ * codecStats() reports zeros for proxies or slots without counters.
  */
 
 import { Injectable } from '@nestjs/common';
@@ -33,8 +34,15 @@ export interface ProxyStatus {
   address?: { address: string; port: number };
   listen?: { host?: string; port?: string };
   upstream?: { host?: string; port?: string };
-  interfaceCodec?: { mode: string; stats?: CodecStats } | null;
-  peerCodec?: { mode: string; stats?: CodecStats } | null;
+  interfaceCodec?: CodecSlot | null;
+  peerCodec?: CodecSlot | null;
+}
+
+/** CodecSlot is one normalized codec entry of a TCP proxy. */
+export interface CodecSlot {
+  mode: string;
+  trackStatistics?: boolean;
+  stats?: CodecStats;
 }
 
 /** FleetStatus is the normalized daemon status document. */
@@ -67,7 +75,12 @@ interface RawProxy {
   address?: { address: string; port: number };
   listen?: RawEndpoint;
   upstream?: RawEndpoint;
-  codec?: { mode: string; role?: string };
+  codec?: {
+    mode: string;
+    role?: string;
+    trackStatistics?: boolean;
+    stats?: CodecStats;
+  };
 }
 
 function normalizeEndpoint(ep?: RawEndpoint): { host?: string; port?: string } | undefined {
@@ -99,7 +112,13 @@ export function normalizeFleet(raw: unknown): FleetStatus {
       base.upstream = normalizeEndpoint(p.upstream);
       const codec = p.codec;
       if (codec !== undefined && codec.mode !== 'none') {
-        const slot = { mode: codec.mode };
+        const slot: CodecSlot = { mode: codec.mode };
+        if (codec.trackStatistics !== undefined) {
+          slot.trackStatistics = codec.trackStatistics;
+        }
+        if (codec.stats !== undefined) {
+          slot.stats = codec.stats;
+        }
         if (codec.role === 'outgoing') {
           base.interfaceCodec = slot;
           base.peerCodec = null;

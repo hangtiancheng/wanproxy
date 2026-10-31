@@ -31,12 +31,32 @@ const STATUS: FleetStatus = {
     {
       acceptedConnections: 3,
       activeSockets: 1,
-      codec: { mode: "zlib-xcodec", role: "incoming" },
+      codec: {
+        mode: "zlib-xcodec",
+        role: "incoming",
+        stats: {
+          codecToIncomingBytes: 4,
+          codecToOutgoingBytes: 3,
+          incomingToCodecBytes: 1,
+          outgoingToCodecBytes: 2,
+        },
+        trackStatistics: true,
+      },
       kind: "tcp",
       listen: { host: "127.0.0.1", port: 3300 },
       listening: true,
       name: "proxy0",
       upstream: { host: "127.0.0.1", port: 3301 },
+    },
+    {
+      acceptedConnections: 1,
+      activeSockets: 0,
+      codec: { mode: "zlib", role: "outgoing" },
+      kind: "tcp",
+      listen: { host: "127.0.0.1", port: 3302 },
+      listening: true,
+      name: "proxy1",
+      upstream: { host: "127.0.0.1", port: 3303 },
     },
     {
       acceptedConnections: 0,
@@ -67,7 +87,15 @@ describe("exportHtml", () => {
     expect(html).toContain("<h1>Status</h1>");
     expect(html).toContain("<td>proxy0</td>");
     expect(html).toContain("<td>socks0</td>");
-    expect(html).toContain("<td>zlib-xcodec</td>");
+    expect(html).toContain("<th>stats</th>");
+    // The peer-side codec renders its four boundary counters, exactly like
+    // the Go monitor's codecStatsString.
+    expect(html).toContain(
+      "<td>peer(zlib-xcodec): {IncomingToCodec:1 CodecToOutgoing:3 " +
+        "OutgoingToCodec:2 CodecToIncoming:4}</td>",
+    );
+    // A codec without track_statistics renders an empty stats cell.
+    expect(html).toContain("<td>proxy1</td><td>tcp</td><td>true</td><td>1</td><td>0</td><td></td>");
   });
 
   it("filters to one object and omits the status table", () => {
@@ -90,7 +118,11 @@ describe("exportText", () => {
     expect(text).toContain("  field: codec; type: string;\r\n");
     expect(text).toContain("   value: XCodec;\r\n");
     expect(text).toContain("status:\r\n");
-    expect(text).toContain("proxy0; tcp; true; 3; 1; zlib-xcodec\r\n");
+    expect(text).toContain(
+      "proxy0; tcp; true; 3; 1; peer(zlib-xcodec): {IncomingToCodec:1 " +
+        "CodecToOutgoing:3 OutgoingToCodec:2 CodecToIncoming:4}\r\n",
+    );
+    expect(text).toContain("proxy1; tcp; true; 1; 0; \r\n");
   });
 
   it("filters to one object and omits the status block", () => {

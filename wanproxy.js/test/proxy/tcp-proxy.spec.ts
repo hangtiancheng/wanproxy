@@ -2,6 +2,7 @@ import { once } from "node:events";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { describe, expect, it } from "vitest";
 
+import { CodecStats } from "@/pipeline/index.js";
 import { ProxyFleet, relayTcpSockets, TcpProxyServer } from "@/proxy/index.js";
 import { concatByteArrays } from "@/xcodec/index.js";
 
@@ -106,6 +107,69 @@ describe("TcpProxyServer", () => {
       expect(socket.destroyed).toBe(true);
     } finally {
       await proxy.stop();
+    }
+  });
+
+  it("counts the four codec boundaries when statistics are tracked", async () => {
+    const echo = await createEchoServer();
+    const stats = new CodecStats();
+    const proxy = new TcpProxyServer(
+      {
+        codec: { mode: "none", role: "incoming" },
+        listen: { host: "127.0.0.1", port: 0 },
+        name: "stats-none",
+        upstream: { host: "127.0.0.1", port: echo.port },
+      },
+      { stats },
+    );
+    try {
+      await proxy.start();
+      const input = payload(4096);
+      await expect(request(proxy.address.port, input)).resolves.toEqual(input);
+      // With no codec every boundary sees the identical byte stream.
+      expect(stats.snapshot()).toEqual({
+        codecToIncomingBytes: 4096,
+        codecToOutgoingBytes: 4096,
+        incomingToCodecBytes: 4096,
+        outgoingToCodecBytes: 4096,
+      });
+      // status() exports the snapshot alongside trackStatistics.
+      const status = proxy.status();
+      expect(status.codec.trackStatistics).toBe(true);
+      expect(status.codec.stats).toEqual(stats.snapshot());
+    } finally {
+      await proxy.stop();
+      await close(echo.server);
+    }
+  });
+
+  it("counts compressed wire bytes distinctly from app bytes", async () => {
+    const echo = await createEchoServer();
+    const stats = new CodecStats();
+    const proxy = new TcpProxyServer(
+      {
+        codec: { compressorLevel: 6, mode: "zlib", role: "incoming" },
+        listen: { host: "127.0.0.1", port: 0 },
+        name: "stats-zlib",
+        upstream: { host: "127.0.0.1", port: echo.port },
+      },
+      { stats },
+    );
+    try {
+      await proxy.start();
+      const input = new Uint8Array(64 * 1024).fill(0x5a);
+      await expect(request(proxy.address.port, input)).resolves.toEqual(input);
+      const snap = stats.snapshot();
+      // The plaintext boundaries see the application bytes ...
+      expect(snap.incomingToCodecBytes).toBe(input.length);
+      expect(snap.codecToIncomingBytes).toBe(input.length);
+      // ... while the wire boundaries see the (smaller) deflate stream,
+      // symmetric because the echo server replays it verbatim.
+      expect(snap.codecToOutgoingBytes).toBeLessThan(input.length);
+      expect(snap.outgoingToCodecBytes).toBe(snap.codecToOutgoingBytes);
+    } finally {
+      await proxy.stop();
+      await close(echo.server);
     }
   });
 

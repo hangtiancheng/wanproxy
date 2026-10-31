@@ -1,10 +1,11 @@
 import { connect, createServer, type Server, type Socket } from "node:net";
 
 import type { TcpProxyConfig } from "../config/proxy-config.js";
+import type { CodecStats } from "../pipeline/codec-stats.js";
 import type { PipelineRuntimeDeps } from "../pipeline/pipeline-builder.js";
 import type { XCodecCache } from "../xcodec/cache-interface.js";
 import { MemoryCache } from "../xcodec/memory-cache.js";
-import type { TcpProxyStatus } from "./proxy-status.js";
+import type { CodecStatus, TcpProxyStatus } from "./proxy-status.js";
 import { closeServer, listen } from "./socket-utils.js";
 import { relayTcpSockets } from "./tcp-relay.js";
 
@@ -20,6 +21,12 @@ export interface TcpProxyRuntime {
    * activated cache (memory, disk or pair) here so that proxies share it.
    */
   readonly cache?: XCodecCache;
+  /**
+   * The codec byte counters activated by `track_statistics`, mirroring the
+   * Go CodecSpec.Stats.  When present, the relay counts bytes at its four
+   * codec boundaries and status() exports a snapshot.
+   */
+  readonly stats?: CodecStats;
 }
 
 export class TcpProxyServer {
@@ -30,7 +37,7 @@ export class TcpProxyServer {
 
   public constructor(
     private readonly config: TcpProxyConfig,
-    runtime: TcpProxyRuntime = {},
+    private readonly runtime: TcpProxyRuntime = {},
   ) {
     this.server = createServer({ allowHalfOpen: true }, (socket) =>
       this.accept(socket),
@@ -82,6 +89,7 @@ export class TcpProxyServer {
         upstream,
         this.config.codec,
         this.deps,
+        this.runtime.stats,
       );
       relay.closed
         .catch(() => undefined)
@@ -99,10 +107,18 @@ export class TcpProxyServer {
   }
 
   private baseStatus(): Omit<TcpProxyStatus, "address"> {
+    const codec: CodecStatus =
+      this.runtime.stats === undefined
+        ? this.config.codec
+        : {
+            ...this.config.codec,
+            stats: this.runtime.stats.snapshot(),
+            trackStatistics: true,
+          };
     return {
       acceptedConnections: this.acceptedConnections,
       activeSockets: this.connections.size,
-      codec: this.config.codec,
+      codec,
       kind: "tcp",
       listen: this.config.listen,
       listening: this.server.listening,

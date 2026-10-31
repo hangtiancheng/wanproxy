@@ -119,7 +119,9 @@ function buildTcpProxy(proxy: RuntimeProxyConfig): TcpProxyServer {
     name: proxy.name,
     upstream: { host: proxy.peer.host, port: Number(proxy.peer.port) },
   };
-  const runtime: TcpProxyRuntime =
-    spec?.cache === undefined ? {} : { cache: spec.cache };
+  const runtime: TcpProxyRuntime = {
+    ...(spec?.cache === undefined ? {} : { cache: spec.cache }),
+    ...(spec?.stats === undefined ? {} : { stats: spec.stats }),
+  };
   return new TcpProxyServer(config, runtime);
 }

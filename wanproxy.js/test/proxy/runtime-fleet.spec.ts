@@ -62,6 +62,7 @@ activate mem0
 create codec codec0
 set codec0.codec XCodec
 set codec0.cache mem0
+set codec0.track_statistics true
 activate codec0
 
 create interface if0
@@ -112,14 +113,38 @@ describe("RuntimeFleet", () => {
       const input = new Uint8Array(2048 * 4).fill(0x5a);
       await expect(request(proxyAddress!.port, input)).resolves.toEqual(input);
 
-      // The monitor JSON status lists the running proxy.
+      // The monitor JSON status lists the running proxy, and the activated
+      // track_statistics counters reflect the transfer.
       const statusResponse = await fetch(
         `http://127.0.0.1:${monitorAddress!.port}/status`,
       );
       const status = (await statusResponse.json()) as {
-        proxies: { name: string; kind: string }[];
+        proxies: {
+          name: string;
+          kind: string;
+          codec?: {
+            mode: string;
+            trackStatistics?: boolean;
+            stats?: {
+              incomingToCodecBytes: number;
+              codecToOutgoingBytes: number;
+              outgoingToCodecBytes: number;
+              codecToIncomingBytes: number;
+            };
+          };
+        }[];
       };
       expect(status.proxies.some((p) => p.name === "proxy0")).toBe(true);
+      const proxy0 = status.proxies.find((p) => p.name === "proxy0");
+      expect(proxy0?.codec?.trackStatistics).toBe(true);
+      expect(proxy0?.codec?.stats?.incomingToCodecBytes).toBe(input.length);
+      expect(proxy0?.codec?.stats?.codecToIncomingBytes).toBe(input.length);
+      // The wire side carries the XCodec-framed stream; the echo replays it
+      // verbatim, so both wire counters agree and exceed zero.
+      expect(proxy0?.codec?.stats?.codecToOutgoingBytes).toBeGreaterThan(0);
+      expect(proxy0?.codec?.stats?.outgoingToCodecBytes).toBe(
+        proxy0?.codec?.stats?.codecToOutgoingBytes,
+      );
 
       // The monitor HTML root exports the activated config objects.
       const htmlResponse = await fetch(

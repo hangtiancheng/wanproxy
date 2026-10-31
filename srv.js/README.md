@@ -97,9 +97,11 @@ byte-identical.
 - The SSH-to-SSH chain scenario is omitted: the wanproxy.js runtime does not
   yet splice a codec pipeline through an SSH-SSH proxy, so there is no SSH
   echo endpoint or SSH benchmark transport here.
-- wanproxy.js does not yet surface the per-codec byte counters in its monitor
-  `/status`, so benchmark `stats` (app/wire bytes and the compression ratio)
-  read as untracked and the experiment falls back to size-based estimates
-  instead of reporting wire savings.  Timing, throughput and SHA-256
-  integrity are fully measured.  Surfacing the counters in wanproxy.js needs
-  no srv.js change.
+- The monitor normalizes the wanproxy.js single-`codec` status slot onto the
+  Go `interfaceCodec`/`peerCodec` shape (role `outgoing` → interfaceCodec,
+  `incoming` → peerCodec) and passes the per-codec byte counters through
+  verbatim, so benchmark `stats` (app/wire bytes and the compression ratio)
+  and the experiment's wire-savings verdicts work exactly as on the Go
+  stack.  Codecs without `track_statistics` read as an all-zero delta and
+  are treated as untracked, letting the experiment fall back to size-based
+  estimates rather than reporting a misleading 100% wire reduction.

@@ -1,7 +1,8 @@
 import type { Socket } from "node:net";
-import type { Transform } from "node:stream";
+import { Transform } from "node:stream";
 
 import type { CodecConfig } from "../config/codec-config.js";
+import type { CodecStats } from "../pipeline/codec-stats.js";
 import type { PipelineRuntimeDeps } from "../pipeline/pipeline-builder.js";
 import { buildCodecPipeline } from "../pipeline/pipeline-builder.js";
 import { proxyPipelineOptions } from "./pipeline-options.js";
@@ -13,6 +14,7 @@ export function relayTcpSockets(
   upstream: Socket,
   codec: CodecConfig,
   deps: PipelineRuntimeDeps = {},
+  stats?: CodecStats,
 ): RelayResult {
   const send = buildCodecPipeline(
     proxyPipelineOptions(codec, "send"),
@@ -22,12 +24,36 @@ export function relayTcpSockets(
     proxyPipelineOptions(codec, "receive"),
     deps,
   ).transforms;
-  const streams = [...send, ...receive];
+  // When statistics tracking is enabled, wrap each direction with counting
+  // pass-throughs at the socket boundaries, mirroring the Go relay's count
+  // callbacks: bytes read from the local socket enter the codec
+  // (incoming_to_codec), bytes written to the upstream socket leave it
+  // (codec_to_outgoing), and the receive direction is symmetric
+  // (outgoing_to_codec / codec_to_incoming).  The positions hold for both
+  // chain sides because a proxy's single codec always sits between its
+  // local and upstream sockets.
+  const sendChain =
+    stats === undefined
+      ? send
+      : [
+          countingStream((n) => stats.addIncomingToCodec(n)),
+          ...send,
+          countingStream((n) => stats.addCodecToOutgoing(n)),
+        ];
+  const receiveChain =
+    stats === undefined
+      ? receive
+      : [
+          countingStream((n) => stats.addOutgoingToCodec(n)),
+          ...receive,
+          countingStream((n) => stats.addCodecToIncoming(n)),
+        ];
+  const streams = [...sendChain, ...receiveChain];
   const destroy = () => destroyAll(local, upstream, streams);
   const close = createRelayCloseController(local, upstream, streams, destroy);
 
-  wireDirection(local, send, upstream);
-  wireDirection(upstream, receive, local);
+  wireDirection(local, sendChain, upstream);
+  wireDirection(upstream, receiveChain, local);
 
   return {
     closed: close.closed,
@@ -36,6 +62,20 @@ export function relayTcpSockets(
       close.resolve();
     },
   };
+}
+
+/**
+ * countingStream returns a pass-through transform that reports the length
+ * of every chunk it forwards.  It adds no buffering, so relay timing and
+ * half-close behaviour are unchanged.
+ */
+function countingStream(count: (bytes: number) => void): Transform {
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      count(chunk.length);
+      callback(null, chunk);
+    },
+  });
 }
 
 /**

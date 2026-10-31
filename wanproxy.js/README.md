@@ -10,7 +10,7 @@ TypeScript migration of the core WANProxy TCP path. The implementation covers a 
 - The monitor serves the C++ endpoints (`src/monitor`): HTML at `/`, per-object views at `/object/<name>`, text under `/:text`, and JSON at `/status`, exporting the activated config objects.
 - The SSH-2 transport layer is migrated (`src/ssh`): identification exchange, KEXINIT negotiation, diffie-hellman-group-exchange key exchange with an `ssh-rsa` host key, AES-CTR/CBC encryption, HMAC integrity, and the binary packet protocol, plus an SSH tunnel proxy (`SshTunnelClient`/`SshTunnelServer`).
 - The XCDFS on-disk cache format is migrated (`src/xcodec/disk-cache.ts`): registry blocks, counter-ordered index blocks, circular FIFO data blocks, and per-XUID front-ends.
-- Pair and null caches (`src/xcodec/pair-cache.ts`, `src/xcodec/null-cache.ts`), the four codec byte counters (`src/pipeline/codec-stats.ts`), and leveled logging (`src/common/log.ts`) are migrated.
+- Pair and null caches (`src/xcodec/pair-cache.ts`, `src/xcodec/null-cache.ts`), the four codec byte counters (`src/pipeline/codec-stats.ts`, counted at the relay's four codec boundaries and exported by the monitor `/status` payload), and leveled logging (`src/common/log.ts`) are migrated.
 - The `tack`, `xcdump`, and `fwdproxy` command-line programs are migrated (see below).
 - The `tack` timing flags (`-T`/`-E`/`-S`) are ported, and SSH host keys load from PEM via `RsaHostKey.fromPrivatePem`.
 
@@ -171,7 +171,7 @@ activate proxy0
 - `src/common`: leveled logging with C++-style component paths (`src/common/log.ts`).
 - `src/config`: configuration — the classic `wanproxy.conf` directive parser, the JSON schemas, the unified runtime model, size parsing, and the format-detecting loader.
 - `src/proxy`: TCP listener, upstream connector, bidirectional relay, the JSON `ProxyFleet`, and the `RuntimeFleet` that runs the unified model.
-- `src/monitor`: monitor HTTP interface — HTML at `/`, per-object views at `/object/<name>`, text under `/:text`, and JSON at `/status`.
+- `src/monitor`: monitor HTTP interface — HTML at `/`, per-object views at `/object/<name>`, text under `/:text`, and JSON at `/status`. TCP proxies report their codec slot with the Go-compatible statistics fields (`trackStatistics`, `stats` with the four boundary counters) when the codec was activated with `track_statistics`.
 - `src/pipeline`: explicit stream pipeline builder for pass-through, zlib, XCodec session, and combined modes, plus the four codec byte counters (`codec-stats.ts`).
 - `src/pipe-protocol`: HELLO, FRAME, ASK, LEARN, ADVANCE, EOS, and EOS_ACK session protocol.
 - `src/xcodec`: pure XCodec hash, frame primitives, memory/persistent/pair/null caches, XCDFS disk cache, backref window, encoder, decoder, and the `xcdump` stream dumper.
@@ -183,6 +183,8 @@ activate proxy0
 - `src/proxy` also provides `SshTunnelClient`/`SshTunnelServer`, which relay a local byte stream to a target over an encrypted SSH transport.
 
 The TCP relay uses manual bidirectional `pipe()` chains instead of `stream/promises.pipeline()` because duplex sockets must preserve half-close behavior while the opposite direction flushes pending data.
+
+When a codec is activated with `track_statistics`, the relay wraps each direction with counting pass-throughs at the socket boundaries, mirroring the Go relay's count callbacks: bytes read from the local socket (`incoming_to_codec`), bytes written to the upstream socket (`codec_to_outgoing`), and the symmetric receive direction (`outgoing_to_codec` / `codec_to_incoming`). The positions hold for both chain sides because a proxy's single codec always sits between its local and upstream sockets, so the monitor `/status` payload reports the same counters the Go fleet does.
 
 ## Development
 
@@ -264,4 +266,3 @@ rm -f large-xcodec-fixture.bin large-file-smoke.bin large-file.log
 - The SSH tunnel proxy carries a raw byte stream over the transport; it does not yet compose the XCodec/zlib codec pipeline inside the SSH link the way the C++ `SSHProxyConnector` splices a codec pipe pair through `SSHStream`.
 - SSH-SSH proxies and proxies that combine an interface and a peer codec parse and validate from the classic config, but `RuntimeFleet` does not yet run them (it raises a clear error); the common single-codec-per-proxy WAN topology is fully supported.
 - Unix-domain-socket endpoints parse from the classic config, but the runtime fleet listens on TCP only.
-- The four codec byte counters (`CodecStats`) are tracked when `track_statistics` is set, but are not yet surfaced in the monitor `/status` payload.

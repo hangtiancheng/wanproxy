@@ -81,6 +81,14 @@ export interface ExperimentRequest {
   size?: number;
   seed?: number;
   iterations?: number;
+  /**
+   * isolateArms gives every arm its own payload seed (seed + armIndex*7919)
+   * so arms cannot warm each other's dedup cache through the fleet-wide
+   * shared cache; defaults to true.  Set it to false to reproduce the
+   * real-world effect of one shared cache serving several chains (arm order
+   * then matters).
+   */
+  isolateArms?: boolean;
 }
 
 /** IterationResult is one transfer inside an experiment arm. */
@@ -112,6 +120,7 @@ export interface ArmTotal {
 export interface ArmReport {
   scenario: Scenario;
   hasStats: boolean;
+  seed: number;
   iterations: IterationResult[];
   total: ArmTotal;
 }
@@ -134,6 +143,7 @@ export interface ExperimentReport {
   direction: string;
   iterations: number;
   baseline: string;
+  isolateArms: boolean;
   arms: ArmReport[];
   comparison: ComparisonVerdict[];
   startedAt: string;
@@ -200,6 +210,7 @@ export class BenchService {
     if (iterations < 1 || iterations > MAX_ITERATIONS) {
       throw new Error('iterations ' + iterations + ' out of range 1..' + MAX_ITERATIONS);
     }
+    const isolateArms = req.isolateArms ?? true;
 
     const scenarios: Scenario[] = [];
     for (const id of req.arms) {
@@ -233,17 +244,23 @@ export class BenchService {
         direction,
         durationMs: 0,
         iterations,
+        isolateArms,
         pattern: patternStr,
         seed,
         size,
         startedAt: new Date(startedAt).toISOString(),
       };
       const multiplier = direction === 'roundtrip' ? 2 : 1;
-      for (const scenario of scenarios) {
+      for (let i = 0; i < scenarios.length; i++) {
+        const scenario = scenarios[i]!;
+        // A distinct payload per arm keeps the shared fleet cache from
+        // leaking warm state across arms.
+        const armSeed = isolateArms ? seed + i * 7919 : seed;
         const arm: ArmReport = {
           hasStats: !!scenario.statsProxy && !!scenario.statsCodec,
           iterations: [],
           scenario,
+          seed: armSeed,
           total: emptyTotal(),
         };
         for (let iter = 1; iter <= iterations; iter++) {
@@ -253,7 +270,7 @@ export class BenchService {
             patternStr,
             pattern,
             size,
-            seed,
+            armSeed,
           );
           const it: IterationResult = {
             appBytes: 0,
@@ -359,10 +376,10 @@ export class BenchService {
         incomingToCodecBytes: after.incomingToCodecBytes - before.incomingToCodecBytes,
         outgoingToCodecBytes: after.outgoingToCodecBytes - before.outgoingToCodecBytes,
       };
-      // wanproxy.js does not yet surface the per-codec byte counters, so the
-      // deltas read as zero.  Treat an all-zero delta as "not tracked" and
-      // omit stats, letting the experiment fall back to the size estimate
-      // rather than reporting a misleading 100% wire reduction.
+      // Codecs without `track_statistics` (or a monitor that could not be
+      // sampled) read as an all-zero delta.  Treat that as "not tracked"
+      // and omit stats, letting the experiment fall back to the size
+      // estimate rather than reporting a misleading 100% wire reduction.
       const tracked =
         raw.incomingToCodecBytes !== 0 ||
         raw.codecToOutgoingBytes !== 0 ||

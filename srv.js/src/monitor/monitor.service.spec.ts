@@ -66,6 +66,33 @@ describe('normalizeFleet', () => {
     expect(fs.proxies[0]!.peerCodec).toBeNull();
     expect(fs.proxies[0]!.interfaceCodec).toBeNull();
   });
+
+  it('passes tracked codec counters through verbatim', () => {
+    const stats = {
+      codecToIncomingBytes: 4096,
+      codecToOutgoingBytes: 512,
+      incomingToCodecBytes: 4096,
+      outgoingToCodecBytes: 512,
+    };
+    const fs = normalizeFleet({
+      proxies: [
+        {
+          acceptedConnections: 1,
+          activeSockets: 0,
+          codec: { mode: 'xcodec', role: 'incoming', stats, trackStatistics: true },
+          kind: 'tcp',
+          listening: true,
+          name: 'proxy-xcodec',
+        },
+      ],
+    });
+    expect(fs.proxies[0]!.peerCodec).toEqual({
+      mode: 'xcodec',
+      stats,
+      trackStatistics: true,
+    });
+    expect(codecStats(fs, 'proxy-xcodec', 'peerCodec')).toEqual(stats);
+  });
 });
 
 describe('codecStats', () => {

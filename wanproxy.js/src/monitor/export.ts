@@ -6,7 +6,11 @@
  */
 
 import type { ConfigObject } from "../config/model.js";
-import type { FleetStatus, ProxyStatus } from "../proxy/proxy-status.js";
+import type {
+  CodecStatus,
+  FleetStatus,
+  ProxyStatus,
+} from "../proxy/proxy-status.js";
 
 /** The member names the C++ monitor renders as object links. */
 const POINTER_FIELDS = new Set([
@@ -124,7 +128,7 @@ function htmlValue(fieldName: string, value: string): string {
 function statusTableHtml(status: FleetStatus): string {
   const parts: string[] = [];
   parts.push(
-    "<table><tr><th>proxy</th><th>kind</th><th>listening</th><th>accepted</th><th>active</th><th>codec</th></tr>",
+    "<table><tr><th>proxy</th><th>kind</th><th>listening</th><th>accepted</th><th>active</th><th>stats</th></tr>",
   );
   for (const row of statusEntries(status)) {
     parts.push(`<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`);
@@ -138,13 +142,33 @@ function statusEntries(status: FleetStatus): string[][] {
 }
 
 function proxyRow(proxy: ProxyStatus): string[] {
-  const codec = proxy.kind === "tcp" ? escapeHtml(proxy.codec.mode) : "";
   return [
     escapeHtml(proxy.name),
     proxy.kind,
     String(proxy.listening),
     String(proxy.acceptedConnections),
     String(proxy.activeSockets),
-    codec,
+    proxy.kind === "tcp" ? escapeHtml(codecStatsString(proxy.codec)) : "",
   ];
+}
+
+/**
+ * codecStatsString renders the Go monitor's stats cell: `interface(mode):
+ * {IncomingToCodec:... CodecToOutgoing:... OutgoingToCodec:...
+ * CodecToIncoming:...}` for the interface side, `peer(mode): ...` for the
+ * peer side, and an empty string when the codec does not track statistics.
+ */
+function codecStatsString(codec: CodecStatus): string {
+  if (codec.mode === "none" || codec.stats === undefined) {
+    return "";
+  }
+  const side = codec.role === "outgoing" ? "interface" : "peer";
+  const s = codec.stats;
+  return (
+    `${side}(${codec.mode}): ` +
+    `{IncomingToCodec:${s.incomingToCodecBytes} ` +
+    `CodecToOutgoing:${s.codecToOutgoingBytes} ` +
+    `OutgoingToCodec:${s.outgoingToCodecBytes} ` +
+    `CodecToIncoming:${s.codecToIncomingBytes}}`
+  );
 }
