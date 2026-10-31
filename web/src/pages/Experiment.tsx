@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowDownToLine,
   CheckCircle2,
@@ -8,6 +8,16 @@ import {
   Snowflake,
   XCircle,
 } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -20,6 +30,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "@/components/ui/chart";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
@@ -58,17 +76,22 @@ const SIZES = [
 
 const ITERATIONS = [1, 2, 3, 5, 8, 12];
 
-/** Arm series colors, indexed by arm position. */
-const ARM_COLORS = [
-  "bg-chart-1",
-  "bg-chart-2",
-  "bg-chart-3",
-  "bg-chart-4",
-  "bg-chart-5",
-  "bg-primary",
-  "bg-info",
-  "bg-muted-foreground",
+/** Arm series colors drawn from the theme's chart palette. */
+const CHART_COLORS = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
 ];
+
+const WARMUP_METRICS = [
+  { id: "wire", label: "Wire bytes" },
+  { id: "throughput", label: "Throughput" },
+  { id: "duration", label: "Duration" },
+] as const;
+
+type WarmupMetric = (typeof WARMUP_METRICS)[number]["id"];
 
 interface Preset {
   id: string;
@@ -132,6 +155,27 @@ const PRESETS: Preset[] = [
   },
 ];
 
+const chartColor = (i: number) => CHART_COLORS[i % CHART_COLORS.length];
+
+/** Full-row tooltip formatter so byte values render as KB/MB/GB. */
+const bytesTooltipFormatter = (value: unknown, name: unknown) => (
+  <div className="flex w-full flex-1 items-center justify-between gap-3 leading-none">
+    <span className="text-muted-foreground">{String(name)}</span>
+    <span className="font-mono font-medium text-foreground tabular-nums">
+      {formatBytes(Number(value))}
+    </span>
+  </div>
+);
+
+const percentTooltipFormatter = (value: unknown, name: unknown) => (
+  <div className="flex w-full flex-1 items-center justify-between gap-3 leading-none">
+    <span className="text-muted-foreground">{String(name)}</span>
+    <span className="font-mono font-medium text-foreground tabular-nums">
+      {Number(value).toFixed(1)}%
+    </span>
+  </div>
+);
+
 export function Experiment() {
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [arms, setArms] = useState<string[]>(["direct", "wan-chain"]);
@@ -142,6 +186,7 @@ export function Experiment() {
   const [seed, setSeed] = useState(42);
   const [iterations, setIterations] = useState(5);
   const [isolateArms, setIsolateArms] = useState(true);
+  const [warmupMetric, setWarmupMetric] = useState<WarmupMetric>("wire");
   const [report, setReport] = useState<ExperimentReport | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -213,12 +258,93 @@ export function Experiment() {
     }
   };
 
-  const maxWire = report
-    ? Math.max(
-        1,
-        ...report.arms.flatMap((a) => a.iterations.map((i) => i.wireBytes)),
-      )
-    : 1;
+  // ---- chart models (derived from the report) ----
+
+  const armConfig = useMemo<ChartConfig>(() => {
+    if (!report) return {};
+    return Object.fromEntries(
+      report.arms.map((arm, i) => [
+        arm.scenario.id,
+        { label: arm.scenario.id, color: chartColor(i) },
+      ]),
+    );
+  }, [report]);
+
+  const bytesConfig = useMemo<ChartConfig>(
+    () => ({
+      app: { label: "App bytes", color: "var(--chart-2)" },
+      wire: { label: "Wire bytes", color: "var(--chart-1)" },
+    }),
+    [],
+  );
+
+  const savingsConfig = useMemo<ChartConfig>(
+    () => ({
+      wire: { label: "Wire reduction", color: "var(--chart-3)" },
+      time: { label: "Time saved", color: "var(--chart-4)" },
+    }),
+    [],
+  );
+
+  const bytesData = useMemo(
+    () =>
+      report
+        ? report.arms.map((a) => ({
+            arm: a.scenario.id,
+            app: a.total.appBytes,
+            wire: a.total.wireBytes,
+          }))
+        : [],
+    [report],
+  );
+
+  const throughputData = useMemo(
+    () =>
+      report
+        ? report.arms.map((a) => ({
+            arm: a.scenario.id,
+            mbps: Number(a.total.meanThroughputMBps.toFixed(2)),
+          }))
+        : [],
+    [report],
+  );
+
+  const savingsData = useMemo(
+    () =>
+      report
+        ? report.comparison.map((v) => ({
+            arm: v.arm,
+            wire: Number((v.wireReductionPct ?? 0).toFixed(1)),
+            time: Number((v.timeSavedPct ?? 0).toFixed(1)),
+          }))
+        : [],
+    [report],
+  );
+
+  const warmupData = useMemo(() => {
+    if (!report) return [];
+    return Array.from({ length: report.iterations }, (_, idx) => {
+      const point: Record<string, number> = { iteration: idx + 1 };
+      for (const arm of report.arms) {
+        const it = arm.iterations[idx];
+        if (!it) continue;
+        point[arm.scenario.id] =
+          warmupMetric === "wire"
+            ? it.wireBytes
+            : warmupMetric === "throughput"
+              ? Number(it.throughputMBps.toFixed(2))
+              : Number(it.durationMs.toFixed(1));
+      }
+      return point;
+    });
+  }, [report, warmupMetric]);
+
+  const warmupValueFormatter = (v: number) =>
+    warmupMetric === "wire"
+      ? formatBytes(v)
+      : warmupMetric === "throughput"
+        ? `${v.toFixed(1)} MB/s`
+        : formatMs(v);
 
   return (
     <div className="flex flex-col gap-6">
@@ -472,64 +598,222 @@ export function Experiment() {
             })}
           </div>
 
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Application vs Wire Bytes</CardTitle>
+                <CardDescription>
+                  Total bytes per arm — the gap between app and wire is what
+                  the codec removes
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ChartContainer config={bytesConfig} className="h-72 w-full">
+                  <BarChart
+                    layout="vertical"
+                    data={bytesData}
+                    margin={{ left: 8, right: 16 }}
+                  >
+                    <CartesianGrid horizontal={false} strokeDasharray="3 3" />
+                    <XAxis
+                      type="number"
+                      tickLine={false}
+                      axisLine={false}
+                      fontSize={11}
+                      tickFormatter={(v) => formatBytes(Number(v))}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="arm"
+                      width={110}
+                      tickLine={false}
+                      axisLine={false}
+                      fontSize={11}
+                    />
+                    <ChartTooltip
+                      content={<ChartTooltipContent formatter={bytesTooltipFormatter} />}
+                    />
+                    <ChartLegend content={<ChartLegendContent />} />
+                    <Bar dataKey="app" fill="var(--color-app)" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="wire" fill="var(--color-wire)" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ChartContainer>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Mean Throughput</CardTitle>
+                <CardDescription>
+                  MB/s per arm, averaged over all iterations
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ChartContainer config={armConfig} className="h-72 w-full">
+                  <BarChart
+                    layout="vertical"
+                    data={throughputData}
+                    margin={{ left: 8, right: 16 }}
+                  >
+                    <CartesianGrid horizontal={false} strokeDasharray="3 3" />
+                    <XAxis
+                      type="number"
+                      tickLine={false}
+                      axisLine={false}
+                      fontSize={11}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="arm"
+                      width={110}
+                      tickLine={false}
+                      axisLine={false}
+                      fontSize={11}
+                    />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Bar dataKey="mbps" name="MB/s" radius={[0, 4, 4, 0]}>
+                      {throughputData.map((d) => (
+                        <Cell key={d.arm} fill={`var(--color-${d.arm})`} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ChartContainer>
+              </CardContent>
+            </Card>
+          </div>
+
           <Card>
             <CardHeader>
-              <CardTitle>Warm-up Curve — Wire Bytes per Iteration</CardTitle>
+              <CardTitle>Warm-up Curve</CardTitle>
               <CardDescription>
                 {PATTERNS[report.pattern] ?? report.pattern} ·{" "}
                 {formatBytes(report.size)} · seed={report.seed}
                 {report.isolateArms ? " (+7919 per arm)" : " (shared)"} ·{" "}
-                {report.direction}
+                {report.direction} — how each arm behaves across iterations
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
-              {report.arms.map((arm, ai) => (
-                <div key={arm.scenario.id} className="flex items-end gap-3">
-                  <div className="w-40 shrink-0">
-                    <div className="truncate font-mono text-xs">
-                      {arm.scenario.id}
-                    </div>
-                    <div className="text-muted-foreground truncate text-[11px]">
-                      {arm.hasStats ? "codec counters" : "unoptimized"}
-                    </div>
-                  </div>
-                  <div className="flex h-28 flex-1 items-end gap-1.5 border-b pb-px">
-                    {arm.iterations.map((it) => (
-                      <div
-                        key={it.iteration}
-                        className="group relative flex max-w-20 flex-1 flex-col items-center justify-end"
-                        title={`#${it.iteration}: wire ${formatBytes(it.wireBytes)} · app ${formatBytes(it.appBytes)} · ${formatMs(it.durationMs)}${it.ok ? "" : ` · ${it.error}`}`}
-                      >
-                        <span className="text-muted-foreground mb-1 hidden font-mono text-[10px] tabular-nums group-hover:block">
-                          {formatBytes(it.wireBytes)}
-                        </span>
-                        <div
-                          className={cn(
-                            "w-full rounded-t-sm transition-all duration-300",
-                            ARM_COLORS[ai % ARM_COLORS.length],
-                            !it.ok && "opacity-30",
-                          )}
-                          style={{
-                            height: `${Math.max((it.wireBytes / maxWire) * 100, 1.5)}%`,
-                          }}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                  <div className="text-right font-mono text-xs tabular-nums">
-                    <div className="text-foreground">
-                      Σ {formatBytes(arm.total.wireBytes)}
-                    </div>
-                    {arm.total.ratio !== null && (
-                      <div className="text-muted-foreground">
-                        ratio {formatRatio(arm.total.ratio)}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+              <ToggleGroup
+                aria-label="Warm-up metric"
+                value={[warmupMetric]}
+                onValueChange={(v) =>
+                  v[0] && setWarmupMetric(v[0] as WarmupMetric)
+                }
+                variant="outline"
+                size="sm"
+                spacing={0}
+                className="w-fit"
+              >
+                {WARMUP_METRICS.map((m) => (
+                  <ToggleGroupItem key={m.id} value={m.id}>
+                    {m.label}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+              <ChartContainer config={armConfig} className="h-80 w-full">
+                <LineChart
+                  data={warmupData}
+                  margin={{ top: 8, right: 16, bottom: 8, left: 8 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis
+                    dataKey="iteration"
+                    tickLine={false}
+                    axisLine={false}
+                    fontSize={11}
+                    tickFormatter={(v) => `#${v}`}
+                  />
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    fontSize={11}
+                    width={72}
+                    tickFormatter={(v) => warmupValueFormatter(Number(v))}
+                  />
+                  <ChartTooltip
+                    content={
+                      <ChartTooltipContent
+                        labelFormatter={(label) => `Iteration #${label}`}
+                        formatter={
+                          warmupMetric === "wire"
+                            ? bytesTooltipFormatter
+                            : undefined
+                        }
+                      />
+                    }
+                  />
+                  <ChartLegend content={<ChartLegendContent />} />
+                  {report.arms.map((arm) => (
+                    <Line
+                      key={arm.scenario.id}
+                      type="monotone"
+                      dataKey={arm.scenario.id}
+                      stroke={`var(--color-${arm.scenario.id})`}
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                      activeDot={{ r: 5 }}
+                    />
+                  ))}
+                </LineChart>
+              </ChartContainer>
             </CardContent>
           </Card>
+
+          {report.comparison.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Savings vs Baseline ({report.baseline})</CardTitle>
+                <CardDescription>
+                  Positive bars mean the arm beats the baseline; negative bars
+                  mean it trails
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ChartContainer config={savingsConfig} className="h-64 w-full">
+                  <BarChart
+                    layout="vertical"
+                    data={savingsData}
+                    margin={{ left: 8, right: 16 }}
+                  >
+                    <CartesianGrid horizontal={false} strokeDasharray="3 3" />
+                    <XAxis
+                      type="number"
+                      tickLine={false}
+                      axisLine={false}
+                      fontSize={11}
+                      tickFormatter={(v) => `${v}%`}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="arm"
+                      width={110}
+                      tickLine={false}
+                      axisLine={false}
+                      fontSize={11}
+                    />
+                    <ChartTooltip
+                      content={
+                        <ChartTooltipContent formatter={percentTooltipFormatter} />
+                      }
+                    />
+                    <ChartLegend content={<ChartLegendContent />} />
+                    <Bar
+                      dataKey="wire"
+                      name="Wire reduction"
+                      fill="var(--color-wire)"
+                      radius={[0, 4, 4, 0]}
+                    />
+                    <Bar
+                      dataKey="time"
+                      name="Time saved"
+                      fill="var(--color-time)"
+                      radius={[0, 4, 4, 0]}
+                    />
+                  </BarChart>
+                </ChartContainer>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>

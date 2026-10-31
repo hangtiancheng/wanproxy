@@ -1,109 +1,105 @@
-## Description
+# srv.js
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+NestJS backend-for-frontend for the WANProxy demo.  It is the TypeScript
+counterpart of the Go `srv/` service and drives **`wanproxy.js`** (the
+TypeScript proxy) instead of the Go binaries: it spawns the wanproxy.js
+daemon, proxies its monitor, serves and analyzes test files, and runs the
+benchmark matrix through the proxy fleet.
 
-## Project setup
+## Quick start
 
-```bash
-$ pnpm install
-```
-
-## Compile and run the project
-
-```bash
-# development
-$ pnpm run start
-
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
-```
-
-## Run tests
+Prerequisites: Node ≥ 20, pnpm, and a built `wanproxy.js` (`pnpm --dir
+../wanproxy.js build`).  srv.js builds wanproxy.js automatically on first
+boot if its `dist/` is missing.
 
 ```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+pnpm install
+pnpm start:dev      # or: pnpm build && pnpm start:prod
 ```
 
-## Deployment
+On boot the daemon service renders `demo/wanproxy.conf.template` into
+`data/wanproxy.conf`, spawns `node ../wanproxy.js/dist/cli/index.js
+data/wanproxy.conf`, and waits for the wanproxy.js monitor.  Then the HTTP
+API listens on `127.0.0.1:3101`.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+The Vite front-end in `../web` talks to this API unchanged.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+## Ports
+
+| Port | Role |
+|---|---|
+| 3101 | srv.js HTTP API (`PORT`/`SRV_PORT`) |
+| 9901 | wanproxy.js monitor (`MONITOR_PORT`) |
+| 8310 / 8311 / 8312 | passthrough / zlib / xcodec single-hop proxies |
+| 8320 → 8321 | WAN chain (wan-a → wan-b, XCodec + zlib) |
+| 8351 / 8352 | zlib-b / xcodec-b server-side hops |
+| 8330 | SOCKS5 proxy |
+
+## HTTP API
+
+| Method & path | Purpose |
+|---|---|
+| `GET /` | health (`{service, status}`) |
+| `GET /api/files` | list stored files |
+| `POST /api/files/generate` | generate a deterministic payload file (`name?`, `size?`, `pattern?`, `seed?`) |
+| `POST /api/files/upload?name=` | store a raw octet-stream upload |
+| `GET /api/files/:id/content` | stream a file, with HTTP `Range` support (video seeking) |
+| `DELETE /api/files/:id` | delete a file |
+| `GET /api/monitor/status` | normalized wanproxy.js fleet status |
+| `GET /api/monitor/scenarios` | the benchmark topologies |
+| `GET /api/bench/scenarios` | same scenario list |
+| `POST /api/bench/run` | run one benchmark (`scenario`, `direction`, `pattern`, `size`, `seed`) |
+| `POST /api/bench/experiment` | A/B experiment across `arms` vs a `baseline` |
+| `POST /api/bench/sink` | upload sink: returns `{bytes, sha256}` |
+| `GET /api/bench/source?size&pattern&seed` | download source: streams the payload |
+| `POST /api/daemon/restart` | restart the fleet (`clearCache` wipes the XCDFS volume) |
+| `POST /api/tools/analyze` | analyze a file with wanproxy.js `tack` + `xcdump` |
+
+## Scenarios
+
+`direct`, `passthrough`, `zlib-chain`, `xcodec-chain`, `wan-chain`, `socks`.
+Benchmarks speak HTTP directly or through any TCP proxy, and SOCKS5 CONNECT;
+integrity is verified by SHA-256 against the local deterministic generator.
+
+## Layout
+
+- `src/common/paths.ts` — repo/port resolution; points at the `wanproxy.js` checkout.
+- `src/common/payload.ts` — deterministic payload generator (random/repeat/mixed/text), byte-identical to the Go `srv` so SHA-256 digests match across the source endpoint, file generation and benchmarks.
+- `src/files` — file metadata (`data/files.json`) and streaming bodies (`data/files/<id>`).
+- `src/monitor` — scenario definitions and the wanproxy.js monitor proxy (normalizes the single `codec` slot onto `interfaceCodec`/`peerCodec`).
+- `src/daemon` — builds/renders/spawns/supervises the wanproxy.js daemon; `restart(clearCache)`.
+- `src/bench` — single-flight benchmark runner (HTTP + SOCKS5 transports) and the A/B experiment aggregator.
+- `src/tools` — `tack`/`xcdump` analysis pipeline over the wanproxy.js CLIs.
+- `demo/wanproxy.conf.template` — the classic-format topology rendered at startup.
+
+## Environment
+
+- `PORT` / `SRV_PORT` — HTTP port (default 3101).
+- `MONITOR_PORT` — wanproxy.js monitor port (default 9901).
+- `SRV_ROOT` — override the resolved srv.js root (used by tests for data isolation).
+- `WANPROXY_JS_ROOT` — override the wanproxy.js checkout location.
+- `SRV_NO_DAEMON=1` — boot the HTTP API without spawning the daemon (tests).
+
+## Tests
 
 ```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
+pnpm test          # unit (payload vectors vs the Go generator, monitor normalize, dump parser)
+pnpm test:e2e      # boots the app (daemon disabled) and exercises the HTTP API
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+The payload unit test pins SHA-256 digests generated by the Go
+`srv/cmd/wanbench gen`, so the TypeScript generator is provably
+byte-identical.
 
-## Observability
+## Differences from the Go srv
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
-
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-To add it to this project, run this and approve the code it prints at [observe.nestjs.com/link](https://observe.nestjs.com/link) - signing up for free if you have no account:
-
-```bash
-$ npx @nestjs/observe link
-```
-
-It installs `@nestjs/observe`, wires it into `AppModule` and `main.ts`, and writes the app key and secret into `.env`, which every `nest start` script (`start`, `start:dev`, `start:debug`) then loads. In production, set `OBSERVE_APP_KEY` and `OBSERVE_APP_SECRET` in the environment instead.
-
-Or do it by hand:
-
-```bash
-$ pnpm install @nestjs/observe
-```
-
-Then follow the [setup guide](https://docs.nestjs.com/observability/sdk) - it takes a single import and an app key.
-
-The free plan needs no payment details and covers 300,000 events a month. You can also browse the [live demo](https://www.observe-demo.nestjs.com/dashboard) first - the whole dashboard over a busy service's data, with nothing to install.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observe](https://observe.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- Drives `wanproxy.js` (node CLIs) rather than the Go `wanproxy.go` binaries.
+- The SSH-to-SSH chain scenario is omitted: the wanproxy.js runtime does not
+  yet splice a codec pipeline through an SSH-SSH proxy, so there is no SSH
+  echo endpoint or SSH benchmark transport here.
+- wanproxy.js does not yet surface the per-codec byte counters in its monitor
+  `/status`, so benchmark `stats` (app/wire bytes and the compression ratio)
+  read as untracked and the experiment falls back to size-based estimates
+  instead of reporting wire savings.  Timing, throughput and SHA-256
+  integrity are fully measured.  Surfacing the counters in wanproxy.js needs
+  no srv.js change.

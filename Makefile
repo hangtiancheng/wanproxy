@@ -1,129 +1,98 @@
-# WANProxy demo stack — one-command orchestration for srv.go (Go BFF) + web (Vite).
+# WANProxy demo stack — thin wrapper around boot.js.
 #
-#   make          start backend + frontend in one terminal (Ctrl-C stops both)
-#   make help     list every target
+# All startup logic (Go stack: srv.go + wanproxy.go, JS stack: srv.js +
+# wanproxy.js, plus the Vite web front-end) lives in boot.js.  Every target
+# here just forwards to `node boot.js <command>`.
 #
-# Backend  srv  → http://127.0.0.1:$(SRV_PORT)  (spawns the wanproxy.go fleet,
-#                 monitor :$(MONITOR_PORT), ssh echo :$(SSH_ECHO_PORT))
-# Frontend web  → http://localhost:$(WEB_PORT)
+#   make [STACK=go|js]   default target: dev (backend + web, foreground)
+#   make help            list every target
 
 SHELL := /bin/sh
-GO    ?= go
+BOOT  := node boot.js
 
-SRV_PORT     ?= 3101
-WEB_PORT     ?= 5173
-MONITOR_PORT ?= 9901
+STACK ?= go
+
+SRV_PORT      ?= 3101
+WEB_PORT      ?= 5173
+MONITOR_PORT  ?= 9901
 SSH_ECHO_PORT ?= 8349
 
-DATA_DIR := srv.go/data
-PID_DIR  := $(DATA_DIR)/pids
-SRV_LOG  := $(DATA_DIR)/server.log
-WEB_LOG  := $(DATA_DIR)/web.log
-SRV_BIN  := srv.go/bin/wanproxy-srv
+PORTS := --srv-port=$(SRV_PORT) --web-port=$(WEB_PORT) --monitor-port=$(MONITOR_PORT) --ssh-echo-port=$(SSH_ECHO_PORT)
 
 .DEFAULT_GOAL := dev
 
-.PHONY: help dev srv web start stop restart status logs open install build test clean
+.PHONY: help dev dev-go dev-js srv srv-go srv-js web
+.PHONY: start start-go start-js stop restart status logs open
+.PHONY: install build build-go build-js test test-go test-js clean
 
 help:
-	@echo "WANProxy demo stack"
-	@echo ""
-	@echo "  make dev       srv (:$(SRV_PORT)) + web (:$(WEB_PORT)) in the foreground; Ctrl-C stops both"
-	@echo "  make start     same, but backgrounded (logs+pidfiles under $(DATA_DIR))"
-	@echo "  make stop      stop the background stack (port-scan fallback)"
-	@echo "  make restart   stop + start"
-	@echo "  make status    show listeners on $(SRV_PORT)/$(WEB_PORT)/$(MONITOR_PORT)"
-	@echo "  make logs      tail srv + web background logs"
-	@echo "  make open      open http://localhost:$(WEB_PORT) in the browser"
-	@echo "  make srv       backend only (foreground)"
-	@echo "  make web       frontend only (foreground)"
-	@echo "  make install   pnpm install + build wanproxy.go tools + srv"
-	@echo "  make build     build wanproxy.go + srv + web"
-	@echo "  make test      go test (wanproxy.go, srv) + web build/lint"
-	@echo "  make clean     remove build artifacts (runtime data in $(DATA_DIR) is kept)"
+	@$(BOOT) help
 
-# ---------------------------------------------------------------- foreground
+dev:
+	@$(BOOT) dev --stack=$(STACK) $(PORTS)
 
-dev: build-srv
-	@echo "==> srv   http://127.0.0.1:$(SRV_PORT)"
-	@echo "==> web   http://localhost:$(WEB_PORT)"
-	@echo "==> Ctrl-C stops both"
-	@trap 'kill 0' EXIT INT TERM; \
-	$(MAKE) srv & \
-	$(MAKE) web & \
-	wait
+dev-go:
+	@$(BOOT) dev --stack=go $(PORTS)
 
-srv: build-srv
-	SRV_PORT=$(SRV_PORT) MONITOR_PORT=$(MONITOR_PORT) SSH_ECHO_PORT=$(SSH_ECHO_PORT) ./$(SRV_BIN)
+dev-js:
+	@$(BOOT) dev --stack=js $(PORTS)
+
+srv:
+	@$(BOOT) srv --stack=$(STACK) $(PORTS)
+
+srv-go:
+	@$(BOOT) srv --stack=go $(PORTS)
+
+srv-js:
+	@$(BOOT) srv --stack=js $(PORTS)
 
 web:
-	cd web && pnpm dev --port $(WEB_PORT)
+	@$(BOOT) web $(PORTS)
 
-# ---------------------------------------------------------------- background
+start:
+	@$(BOOT) start --stack=$(STACK) $(PORTS)
 
-start: build-srv
-	@mkdir -p $(PID_DIR)
-	@if [ -f $(PID_DIR)/srv.pid ] && kill -0 `cat $(PID_DIR)/srv.pid` 2>/dev/null; then \
-	  echo "srv already running (pid `cat $(PID_DIR)/srv.pid`)"; \
-	else \
-	  SRV_PORT=$(SRV_PORT) MONITOR_PORT=$(MONITOR_PORT) SSH_ECHO_PORT=$(SSH_ECHO_PORT) \
-	    nohup ./$(SRV_BIN) >> $(SRV_LOG) 2>&1 & echo $$! > $(PID_DIR)/srv.pid; \
-	  echo "srv started (pid $$!) → http://127.0.0.1:$(SRV_PORT)  log: $(SRV_LOG)"; \
-	fi
-	@if [ -f $(PID_DIR)/web.pid ] && kill -0 `cat $(PID_DIR)/web.pid` 2>/dev/null; then \
-	  echo "web already running (pid `cat $(PID_DIR)/web.pid`)"; \
-	else \
-	  cd web && nohup pnpm dev --port $(WEB_PORT) >> ../$(WEB_LOG) 2>&1 & echo $$! > $(PID_DIR)/web.pid; \
-	  echo "web started (pid $$!) → http://localhost:$(WEB_PORT)  log: $(WEB_LOG)"; \
-	fi
+start-go:
+	@$(BOOT) start --stack=go $(PORTS)
+
+start-js:
+	@$(BOOT) start --stack=js $(PORTS)
 
 stop:
-	@for f in $(PID_DIR)/srv.pid $(PID_DIR)/web.pid; do \
-	  if [ -f $$f ]; then \
-	    pid=`cat $$f`; \
-	    kill $$pid 2>/dev/null && echo "stopped pid $$pid"; \
-	    rm -f $$f; \
-	  fi; \
-	done
-	@sleep 1
-	@for p in $(SRV_PORT) $(WEB_PORT) $(MONITOR_PORT) $(SSH_ECHO_PORT); do \
-	  pids=`lsof -ti tcp:$$p -s tcp:listen 2>/dev/null`; \
-	  if [ -n "$$pids" ]; then echo "killing leftover listeners on :$$p ($$pids)"; kill $$pids 2>/dev/null; fi; \
-	done
-	@echo "stack stopped"
+	@$(BOOT) stop $(PORTS)
 
-restart: stop start
+restart:
+	@$(BOOT) restart --stack=$(STACK) $(PORTS)
 
 status:
-	@lsof -nP -iTCP:$(SRV_PORT) -iTCP:$(WEB_PORT) -iTCP:$(MONITOR_PORT) -sTCP:LISTEN 2>/dev/null || echo "nothing listening on $(SRV_PORT)/$(WEB_PORT)/$(MONITOR_PORT)"
+	@$(BOOT) status $(PORTS)
 
 logs:
-	tail -n 40 -f $(SRV_LOG) $(WEB_LOG)
+	@$(BOOT) logs --stack=$(STACK)
 
 open:
-	open http://localhost:$(WEB_PORT)
-
-# ------------------------------------------------------------------- builds
-
-build-srv:
-	@mkdir -p srv.go/bin
-	cd srv.go && $(GO) build -o bin/wanproxy-srv ./cmd/server
+	@$(BOOT) open $(PORTS)
 
 install:
-	pnpm install
-	$(MAKE) -C wanproxy.go build
-	$(MAKE) build-srv
+	@$(BOOT) install
 
 build:
-	$(MAKE) -C wanproxy.go build
-	$(MAKE) build-srv
-	cd web && pnpm build
+	@$(BOOT) build --stack=$(STACK)
+
+build-go:
+	@$(BOOT) build --stack=go
+
+build-js:
+	@$(BOOT) build --stack=js
 
 test:
-	$(MAKE) -C wanproxy.go test
-	cd srv.go && $(GO) vet ./... && $(GO) test ./...
-	cd web && pnpm build && pnpm lint
+	@$(BOOT) test --stack=$(STACK)
+
+test-go:
+	@$(BOOT) test --stack=go
+
+test-js:
+	@$(BOOT) test --stack=js
 
 clean:
-	$(MAKE) -C wanproxy.go clean
-	rm -rf srv.go/bin web/dist
+	@$(BOOT) clean

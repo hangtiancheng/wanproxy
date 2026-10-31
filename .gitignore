@@ -178,3 +178,5 @@ target
 /wanproxy/
 srv.go/data
 srv.js/data
+
+tsconfig.build.tsbuildinfo

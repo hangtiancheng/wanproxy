@@ -1,8 +1,8 @@
 {
   "name": "wanproxy",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "version": "0.0.0",
+  "private": true,
+  "main": "boot.js",
   "scripts": {
     "git:config": "git config user.name hangtiancheng && git config user.email '161043261@qq.com'",
     "git:commit": "git add -A && git commit -m \"feat: Introduce new features\"",
@@ -10,8 +10,12 @@
     "git:push": "pnpm git:commit && git push origin main",
     "git:push:skip": "pnpm git:commit:skip &&git push origin main"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "wan",
+    "proxy",
+    "wanproxy"
+  ],
+  "author": "https://github.com/hangtiancheng",
   "license": "ISC",
   "packageManager": "pnpm@12.10.1",
   "type": "module"
