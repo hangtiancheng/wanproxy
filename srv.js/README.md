@@ -34,6 +34,8 @@ The Vite front-end in `../web` talks to this API unchanged.
 | 8320 → 8321        | WAN chain (wan-a → wan-b, XCodec + zlib)       |
 | 8351 / 8352        | zlib-b / xcodec-b server-side hops             |
 | 8330               | SOCKS5 proxy                                   |
+| 8340 → 8341        | SSH chain (ssh-a → ssh-b, codec spliced inside SSH) |
+| 8349               | `ssh-echo` endpoint the SSH chain terminates on |
 
 ## HTTP API
 
@@ -57,7 +59,8 @@ The Vite front-end in `../web` talks to this API unchanged.
 
 ## Scenarios
 
-`direct`, `passthrough`, `zlib-chain`, `xcodec-chain`, `wan-chain`, `socks`.
+`direct`, `passthrough`, `zlib-chain`, `xcodec-chain`, `wan-chain`, `socks`,
+`ssh-chain`.
 Benchmarks speak HTTP directly or through any TCP proxy, and SOCKS5 CONNECT;
 integrity is verified by SHA-256 against the local deterministic generator.
 
@@ -108,3 +111,9 @@ byte-identical.
   stack. Codecs without `track_statistics` read as an all-zero delta and
   are treated as untracked, letting the experiment fall back to size-based
   estimates rather than reporting a misleading 100% wire reduction.
+- Inherits the one documented protocol difference of the underlying
+  wanproxy.js relay: crossed decode responses (`<ASK>`/`<LEARN>`/
+  `<ADVANCE>`/`<EOS_ACK>`) are not routed back to the originating wire and
+  half-close is FIN-based. No scenario this service runs exercises it (the
+  fleet shares one cache); see `../wanproxy.js/README.md` § "Differences
+  from the Go port" for the full tradeoff.

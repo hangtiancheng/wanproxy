@@ -259,11 +259,31 @@ rm -f large-xcodec-fixture.bin large-file-smoke.bin large-file.log
 - If large-file validation fails before hashing, run `pnpm build` or remove `--skip-build`.
 - If large-file validation reuses stale data, pass `--force` or delete the fixture.
 
+## Differences from the Go port
+
+The TypeScript port shares its design with the Go port (`wanproxy.go`) at every layer except one: how the per-connection relay integrates the codec sessions into two live sockets. This section states that difference exactly, and the tradeoff behind it.
+
+**Faithful layers.** The XCodec hash and frame primitives, the memory/disk (XCDFS)/pair/null caches, the pipe-protocol session state machine, the `<HELLO>` stable-cache-UUID semantics, the SSH-2 transport, the SSH-SSH proxy and dual-codec relay composition, the four `track_statistics` byte counters, the monitor `/status` payload shape, and the `tack`/`xcdump`/`fwdproxy` CLIs all mirror the Go port (and through it the C++ original), pinned by golden wire snapshots. In particular `CodecSession.receive()` (`src/pipe-protocol/codec-session.ts`) yields the decoded `output` together with the crossed `responses` bytes (`<ASK>`/`<LEARN>`/`<ADVANCE>`/`<EOS_ACK>`) exactly as Go's `Session.Receive` does — the session layer is protocol-complete on both sides, and the difference is purely in what the relay does with those `responses`.
+
+**Where the relay differs.**
+
+| Aspect | Go (`wanproxy.go/proxy/relay.go`) | TypeScript (`src/proxy/tcp-relay.ts`) |
+| ------ | --------------------------------- | ------------------------------------- |
+| Pumping model | one `Relay` per connection; two goroutines do blocking reads and manual writes | linear Node stream chains (`pipe()` + `Transform`) per direction |
+| Crossed decode responses | `Session.Receive` responses are written back onto the wire their frames arrived on, through that wire's deflate stream | `SessionDecodeTransform` pushes only the decoded payload; the `responses` are discarded |
+| Half-close | `<EOS>`/`<EOS_ACK>` plus TCP `CloseWrite`; each direction drains its source socket to EOF before the relay closes anything | TCP/SSH FIN: when the source read side ends, the destination write side is ended (`allowHalfOpen` keeps the reverse direction alive); teardown then half-closes and drains both sides |
+
+**Why — the design tradeoff.** The difference is rooted in the two IO models. A Go goroutine doing a blocking read has a natural merge point: the decode step simply writes its responses back to the source wire before continuing. A Node `Transform` has exactly one writable→readable path, so a linear `pipe()` pipeline has no second output channel toward the source wire; faithful response crossing would mean replacing the stream chains with a manual-pump relay like Go's, changing the half-close and teardown semantics of every proxy type at once.
+
+The scoping follows from the demo fleet's topology: both chain sides share one XCDFS cache and `<HELLO>` carries the stable cache UUID, so a decoder already holds every hash its peer can reference — no `<ASK>`/`<LEARN>` exchange ever fires in the shipped scenarios, and `<EOS_ACK>` is advisory because FIN-based half-close plus the drain-on-teardown already preserves ordering and trailing bytes. Every demo scenario (direct / passthrough / zlib / xcodec / WAN / SOCKS / SSH chain) therefore behaves identically on both stacks, and the A/B wire-byte numbers are comparable.
+
+The divergence becomes observable only for configurations with isolated per-peer caches, where a decoder must `<ASK>` for unknown hashes and the encoder `<LEARN>`s the blocks in reply; without response crossing, deduplication across such peers cannot bootstrap. This is a deliberate, documented tradeoff rather than an oversight: the fix is well understood (port the Go relay's pump/merge/drain semantics), the session layer already emits everything it needs, and until isolated-cache fidelity is required the change stays localized to `src/proxy/tcp-relay.ts` and `src/pipeline/session-transform.ts`.
+
 ## Residual Gaps
 
 - Full C++ protocol compatibility has not been certified against a live C++ WANProxy peer.
 - The SSH transport is migrated and self-tested (client/server handshake and encrypted tunnel), but has not been certified for interoperability against a live OpenSSH or C++ WANProxy peer; it offers a focused algorithm suite (diffie-hellman-group-exchange-sha256/sha1, ssh-rsa, aes128/256-ctr/cbc, hmac-sha1/sha2-256/sha2-512) and does not implement user authentication or SSH channels.
 - SSH-SSH proxies are runnable (`src/proxy/ssh-ssh-proxy.ts`): the interface hop runs an SSH server transport and the peer hop an SSH client transport, and the codec pipeline is spliced between the two decrypted streams, mirroring the C++ `SSHProxyListener`/`SSHProxyConnector` pair. Packet tagging follows the C++ `SSHStream` framing rule (a hop is 0xff-tagged exactly when its codec is active; untagged hops carry `[uint32 length][data]` framing). The `ssh-echo` CLI (`src/cli/ssh-echo.ts`) is the in-process echo endpoint the chain terminates on, mirroring `wanbench ssh-echo`.
 - Proxies that combine an interface and a peer codec are runnable: the relay composes `[interface decode] → [peer encode]` (and the reverse) and counts the two internal boundaries, mirroring the Go `Relay`. The `SshTunnelClient`/`SshTunnelServer` helpers remain raw byte tunnels (no codec splice); use the SSH-SSH proxy type for a codec-bearing SSH link.
-- The relay's crossed protocol responses (`<ASK>`/`<LEARN>`/`<ADVANCE>`/`<EOS_ACK>`) are not yet routed back to the originating wire; half-close uses TCP/SSH FIN and the shared demo cache resolves references without `<ASK>`/`<LEARN>`, so the demo topologies are unaffected, but isolated per-peer caches would need this for full protocol fidelity.
+- The relay does not route crossed protocol responses (`<ASK>`/`<LEARN>`/`<ADVANCE>`/`<EOS_ACK>`) back to the originating wire, and half-close is FIN-based rather than `<EOS>`/`<EOS_ACK>`-based; the shared demo cache resolves references without `<ASK>`/`<LEARN>`, so the demo topologies are unaffected, but isolated per-peer caches would need this for full protocol fidelity. See [Differences from the Go port](#differences-from-the-go-port) for the complete analysis and the tradeoff.
 - Unix-domain-socket endpoints parse from the classic config, but the runtime fleet listens on TCP only.

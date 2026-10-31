@@ -68,7 +68,9 @@ timing, throughput, SHA-256 integrity, and the per-codec wire-byte counters
 (`track_statistics`), so A/B experiments report real wire savings on either
 stack. The JS stack runs the SSH chain over the wanproxy.js SSH-SSH proxy
 (codec spliced through the encrypted link) and its `ssh-echo` endpoint; see
-[`srv.js/README.md`](srv.js/README.md) for the remaining protocol gaps.
+[`wanproxy.js/README.md`](wanproxy.js/README.md) (§ Differences from the Go
+port, § Residual Gaps) for the one remaining protocol-level difference
+between the stacks and the tradeoff behind it.
 
 ### Demo port map
 
@@ -90,6 +92,22 @@ stack. The JS stack runs the SSH chain over the wanproxy.js SSH-SSH proxy
   snapshots), pipeline mapping, and deviation notes.
 - TypeScript proxy: [`wanproxy.js/README.md`](wanproxy.js/README.md) — the
   classic `wanproxy.conf` parser, XCDFS disk cache, SSH transport, monitor
-  endpoints, and the `tack`/`xcdump`/`fwdproxy` CLIs.
+  endpoints, the `tack`/`xcdump`/`fwdproxy` CLIs, and a faithful account of
+  where its relay differs from the Go port (crossed decode responses and
+  half-close semantics) and why.
 - NestJS SRV: [`srv.js/README.md`](srv.js/README.md) — the HTTP API,
-  wanproxy.js integration, and known gaps.
+  wanproxy.js integration, and its differences from the Go srv.
+
+### Cross-stack parity
+
+The Go and TypeScript ports are golden-tested to be byte-identical at the
+codec/session layer, and every demo scenario runs end to end on both stacks
+with comparable A/B numbers. The single remaining protocol-level difference
+lives in the TypeScript relay integration layer: crossed decode responses
+(`<ASK>`/`<LEARN>`/`<ADVANCE>`/`<EOS_ACK>`) are not routed back to the
+originating wire, and half-close is FIN-based rather than
+`<EOS>`/`<EOS_ACK>`-based. This is a deliberate, documented tradeoff rooted
+in the Node stream model; it does not affect any shipped scenario (the demo
+fleet shares one cache, so no `<ASK>`/`<LEARN>` exchange ever fires). See
+[`wanproxy.js/README.md`](wanproxy.js/README.md#differences-from-the-go-port)
+for the full analysis.

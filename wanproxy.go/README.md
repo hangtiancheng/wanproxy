@@ -172,6 +172,13 @@ deflate stream) their frames arrived on.  Half-close propagates with
 its source socket to EOF before the relay closes anything, so final
 frames are never lost to a reset.
 
+(The TypeScript port keeps the session layer — its `CodecSession.receive`
+emits the same responses — but simplifies this integration layer: decode
+responses are not crossed back onto the originating wire and half-close is
+FIN-based rather than `<EOS>`/`<EOS_ACK>`-based.  See
+`../wanproxy.js/README.md` § "Differences from the Go port" for the exact
+scope and the tradeoff.)
+
 The identity announced in `<HELLO>` is the **cache UUID**, stable
 across connections (C++ `codec_->cache()->uuid_encode`), so a
 reconnecting peer reuses the decoder cache it connected before and
