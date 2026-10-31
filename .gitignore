@@ -177,6 +177,5 @@ target
 # anchored, or it also ignores wanproxy.go/cmd/wanproxy/ (the daemon).
 /wanproxy/
 srv.go/data
-srv.js/data
 
 tsconfig.build.tsbuildinfo

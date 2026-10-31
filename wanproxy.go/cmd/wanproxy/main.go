@@ -3,7 +3,7 @@
 // Usage: wanproxy [-q | -v] -c configfile
 //
 // The config file may use the classic wanproxy.conf directive format of
-// the C++ original or the JSON format of the TypeScript port.
+// the C++ original or the JSON configuration format.
 package main
 
 import (

@@ -10,9 +10,7 @@ tools** —
 built on the Go standard library (`net`, `compress/zlib`, `net/http`,
 `crypto/*`, `encoding/binary`, `math/big`, `log/slog`).
 
-The TypeScript sibling port (`wanproxy.js`) served as a cross-check;
-where the two references disagreed, the C++ original is the source of
-truth (see *Deviations*).
+The C++ original is the source of truth (see *Deviations*).
 
 ## Layout
 
@@ -22,9 +20,9 @@ truth (see *Deviations*).
 | `ssh/` | `ssh/` | SSH-2 transport: version exchange, KEXINIT negotiation, diffie-hellman-group-exchange (SHA-1/SHA-256, C++ test group), RFC 4253 key derivation, binary packets, ssh-rsa host keys, `SSHStream` application framing |
 | `pipeline/` | `zlib/`, `programs/wanproxy/wanproxy_codec_pipe_pair.*` | Codec spec, direction/role step resolution, zlib deflate/inflate wrappers, byte-counter stats |
 | `proxy/` | `programs/wanproxy/proxy_*` | TCP-TCP proxy listener, SOCKS4/5 proxy, bidirectional relay with half-close and session drain, fleet |
-| `config/` | `config/`, `programs/wanproxy/wanproxy_config*` | Classic `wanproxy.conf` parser (`create`/`set`/`activate`, `$obj.member` references, quoted strings, `128MB` sizes) and the JSON format of the TypeScript port |
+| `config/` | `config/`, `programs/wanproxy/wanproxy_config*` | Classic `wanproxy.conf` parser (`create`/`set`/`activate`, `$obj.member` references, quoted strings, `128MB` sizes) and a JSON configuration format |
 | `monitor/` | `programs/wanproxy/monitor_client.*` | HTTP monitor: HTML at `/`, per-object at `/object/<name>`, text under `/:text`, JSON at `/status` |
-| `validation/` | (TypeScript `src/validation`) | Large-file XCodec roundtrip harness with SHA-256 verification |
+| `validation/` | — | Large-file XCodec roundtrip harness with SHA-256 verification |
 | `common/` | `common/log.*` | Leveled logging with C++-style component paths |
 | `cmd/wanproxy` | `programs/wanproxy` | The daemon: `wanproxy [-q \| -v] -c configfile` |
 | `cmd/xcdump` | `programs/xcdump` | XCodec stream decoder and pretty-printer: `xcdump [-v] [file ...]` |
@@ -86,7 +84,7 @@ go test ./...
 # wanproxy.conf.example):
 go run ./cmd/wanproxy -c wanproxy.conf.example
 
-# Or with the JSON format of the TypeScript port:
+# Or with the JSON configuration format:
 cat > proxy.json <<'JSON'
 {
   "proxies": [
@@ -172,12 +170,6 @@ deflate stream) their frames arrived on.  Half-close propagates with
 its source socket to EOF before the relay closes anything, so final
 frames are never lost to a reset.
 
-(The TypeScript port keeps the session layer — its `CodecSession.receive`
-emits the same responses — but simplifies this integration layer: decode
-responses are not crossed back onto the originating wire and half-close is
-FIN-based rather than `<EOS>`/`<EOS_ACK>`-based.  See
-`../wanproxy.js/README.md` § "Differences from the Go port" for the exact
-scope and the tradeoff.)
 
 The identity announced in `<HELLO>` is the **cache UUID**, stable
 across connections (C++ `codec_->cache()->uuid_encode`), so a
@@ -212,7 +204,7 @@ references resolve without new `<ASK>`/`<LEARN>` exchanges.
 * **diskdup exit codes**: read/write failures and a volume ending
   mid-block exit non-zero (the C++ version logs and exits 0), matching
   the tack deviation above.
-* **Not ported** (as in the TypeScript port): the IRC and HTTP protocol
+* **Not ported**: the IRC and HTTP protocol
   libraries, the `uinet` user-space TCP/IP stack, the event/callback
   subsystem, the `Buffer`/refcount/thread infrastructure (Go slices,
   goroutines and GC replace them), and the `websplat` demo web server.

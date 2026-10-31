@@ -1,4 +1,4 @@
-// Command server is the Go replacement for the NestJS SRV.  It brings
+// Command server runs the WANProxy demo SRV.  It brings
 // up the wanproxy demo fleet (daemon + in-process SSH echo), serves the
 // HTTP API on 127.0.0.1:3101, and tears everything down cleanly on
 // SIGINT/SIGTERM so no child process is ever left orphaned.

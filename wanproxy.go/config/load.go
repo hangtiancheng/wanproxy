@@ -9,8 +9,8 @@ import (
 )
 
 // Load reads a configuration file, detecting the format: files whose
-// first non-space, non-comment byte is '{' are parsed as JSON (the
-// TypeScript port format), everything else as the classic wanproxy.conf
+// first non-space, non-comment byte is '{' are parsed as JSON,
+// everything else as the classic wanproxy.conf
 // directive format of the C++ original.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)

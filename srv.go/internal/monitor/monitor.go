@@ -1,6 +1,6 @@
-// Package monitor is the Go port of src/monitor/monitor.service.ts.
-// It proxies the wanproxy daemon /status endpoint and owns the shared
-// scenario definitions consumed by the bench runner and the web UI.
+// Package monitor proxies the wanproxy daemon /status endpoint and owns
+// the shared scenario definitions consumed by the bench runner and the
+// web UI.
 package monitor
 
 import (
@@ -43,7 +43,7 @@ type FleetStatus struct {
 }
 
 // Scenario describes one benchmark topology.  The JSON shape matches
-// src/monitor/monitor.service.ts and web/src/lib/api.ts exactly.
+// web/src/lib/api.ts exactly.
 type Scenario struct {
 	ID          string `json:"id"`
 	Label       string `json:"label"`
@@ -57,8 +57,7 @@ type Scenario struct {
 	Protocol    string `json:"protocol"`
 }
 
-// Scenarios returns the seven demo scenarios, copied verbatim from the
-// (already English) TypeScript source.
+// Scenarios returns the seven demo scenarios.
 func Scenarios() []Scenario {
 	srvPort := paths.SRVPort()
 	srvBase := fmt.Sprintf("http://127.0.0.1:%d", srvPort)

@@ -1,6 +1,5 @@
-// Package tools is the Go port of src/tools/tools.service.ts.  It
-// analyzes a stored file with tack (in-band + dictionary modes) and
-// xcdump, summarizing the resulting XCodec frame stream.
+// Package tools analyzes a stored file with tack (in-band + dictionary
+// modes) and xcdump, summarizing the resulting XCodec frame stream.
 package tools
 
 import (
@@ -213,8 +212,7 @@ func runXcdump(xcdump, inbandPath string) (string, error) {
 	return stdout.String(), nil
 }
 
-// parseDump summarizes an xcdump -v frame listing, mirroring
-// ToolsService.parseDump in the TypeScript source.
+// parseDump summarizes an xcdump -v frame listing.
 func parseDump(dump string) FrameSummary {
 	summary := FrameSummary{
 		TopHashes:   []HashCount{},

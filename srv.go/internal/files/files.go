@@ -1,6 +1,5 @@
-// Package files is the Go port of src/files/files.service.ts.  It
-// persists file metadata to data/files.json and streams file bodies
-// to/from data/files/<id>.
+// Package files persists file metadata to data/files.json and streams
+// file bodies to/from data/files/<id>.
 package files
 
 import (
@@ -24,8 +23,7 @@ import (
 )
 
 // FileMeta is one stored file's metadata.  pattern/seed are omitted
-// for uploads (matching the TypeScript behaviour where undefined
-// fields disappear from JSON).
+// for uploads (empty fields disappear from JSON).
 type FileMeta struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`

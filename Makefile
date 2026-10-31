@@ -1,16 +1,11 @@
-# WANProxy demo stack — thin wrapper around boot.js.
+# WANProxy demo stack: Go backend (srv.go + wanproxy.go) and web dashboard.
 #
-# All startup logic (Go stack: srv.go + wanproxy.go, JS stack: srv.js +
-# wanproxy.js, plus the Vite web front-end) lives in boot.js.  Every target
-# here just forwards to `node boot.js <command>`.
+# Every target forwards to the cross-platform stack helper.
 #
-#   make [STACK=go|js]   default target: dev (backend + web, foreground)
-#   make help            list every target
+#   make            default target: dev (backend + web, foreground)
+#   make help       list every target
 
-SHELL := /bin/sh
-BOOT  := node boot.js
-
-STACK ?= go
+GO ?= go
 
 SRV_PORT      ?= 3101
 WEB_PORT      ?= 5173
@@ -18,81 +13,63 @@ MONITOR_PORT  ?= 9901
 SSH_ECHO_PORT ?= 8349
 
 PORTS := --srv-port=$(SRV_PORT) --web-port=$(WEB_PORT) --monitor-port=$(MONITOR_PORT) --ssh-echo-port=$(SSH_ECHO_PORT)
+STACK := $(GO) run ./srv.go/cmd/stack
 
 .DEFAULT_GOAL := dev
 
-.PHONY: help dev dev-go dev-js srv srv-go srv-js web
-.PHONY: start start-go start-js stop restart status logs open
-.PHONY: install build build-go build-js test test-go test-js clean
+.PHONY: help dev srv web start stop restart status logs open
+.PHONY: install build build-go build-web test test-go test-web clean
 
 help:
-	@$(BOOT) help
+	@$(STACK) help $(PORTS)
 
 dev:
-	@$(BOOT) dev --stack=$(STACK) $(PORTS)
-
-dev-go:
-	@$(BOOT) dev --stack=go $(PORTS)
-
-dev-js:
-	@$(BOOT) dev --stack=js $(PORTS)
+	@$(STACK) dev $(PORTS)
 
 srv:
-	@$(BOOT) srv --stack=$(STACK) $(PORTS)
-
-srv-go:
-	@$(BOOT) srv --stack=go $(PORTS)
-
-srv-js:
-	@$(BOOT) srv --stack=js $(PORTS)
+	@$(STACK) srv $(PORTS)
 
 web:
-	@$(BOOT) web $(PORTS)
+	@$(STACK) web $(PORTS)
 
 start:
-	@$(BOOT) start --stack=$(STACK) $(PORTS)
-
-start-go:
-	@$(BOOT) start --stack=go $(PORTS)
-
-start-js:
-	@$(BOOT) start --stack=js $(PORTS)
+	@$(STACK) start $(PORTS)
 
 stop:
-	@$(BOOT) stop $(PORTS)
+	@$(STACK) stop
 
 restart:
-	@$(BOOT) restart --stack=$(STACK) $(PORTS)
+	@$(STACK) restart $(PORTS)
 
 status:
-	@$(BOOT) status $(PORTS)
+	@$(STACK) status
 
 logs:
-	@$(BOOT) logs --stack=$(STACK)
+	@$(STACK) logs
 
 open:
-	@$(BOOT) open $(PORTS)
+	@$(STACK) open $(PORTS)
 
 install:
-	@$(BOOT) install
+	@$(STACK) install $(PORTS)
 
 build:
-	@$(BOOT) build --stack=$(STACK)
+	@$(STACK) build
 
 build-go:
-	@$(BOOT) build --stack=go
+	@$(STACK) build-go
 
-build-js:
-	@$(BOOT) build --stack=js
+build-web:
+	@$(STACK) build-web
 
 test:
-	@$(BOOT) test --stack=$(STACK)
+	@$(STACK) test
 
 test-go:
-	@$(BOOT) test --stack=go
+	@$(STACK) test-go
 
-test-js:
-	@$(BOOT) test --stack=js
+test-web:
+	@$(STACK) test-web
 
 clean:
-	@$(BOOT) clean
+	@$(STACK) clean

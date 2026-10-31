@@ -1,7 +1,6 @@
 // Package server wires the yukino_http application: global CORS, the
 // root health endpoint, and the /api routes backed by the files,
-// monitor, bench and tools services.  It is the Go port of the NestJS
-// controllers under src/**.
+// monitor, bench and tools services.
 package server
 
 import (
@@ -432,8 +431,8 @@ func (s *Server) analyze(ctx *yukino.Context, next func()) {
 // helpers
 // ---------------------------------------------------------------------
 
-// encodeURIComponent mirrors the JavaScript function of the same name:
-// every byte except A-Z a-z 0-9 - _ . ! ~ * ' ( ) is percent-encoded.
+// encodeURIComponent percent-encodes every byte except
+// A-Z a-z 0-9 - _ . ! ~ * ' ( ).
 func encodeURIComponent(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {

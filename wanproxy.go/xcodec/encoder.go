@@ -22,8 +22,8 @@ type EncoderOption func(*Encoder)
 
 // WithBackrefs lets the encoder emit <BACKREF> frames for segments that
 // are still present in the backref window.  The C++ encoder never emits
-// backrefs (decoders do support them); this mirrors the option added by
-// the TypeScript port and is off by default.
+// backrefs (decoders do support them); backref emission is off by
+// default.
 func WithBackrefs() EncoderOption {
 	return func(e *Encoder) { e.emitBackrefs = true }
 }

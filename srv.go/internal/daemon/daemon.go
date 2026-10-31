@@ -1,4 +1,4 @@
-// Package daemon is the Go port of src/daemon/*.ts.  It orchestrates
+// Package daemon orchestrates
 // the demo infrastructure: builds the wanproxy.go binaries on demand,
 // generates the SSH demo host key, renders the demo config, spawns the
 // wanproxy daemon as a child process, and runs the SSH echo endpoint

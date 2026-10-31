@@ -1,45 +1,33 @@
 # WANProxy workspace
 
-This workspace holds the C++ original of
-[WANProxy](https://github.com/wanproxy/wanproxy) plus **two complete ports** —
-Go and TypeScript — of both the proxy and the demo backend-for-frontend, and a
-shared web front-end that drives either one.
+This workspace holds the Go port of
+[WANProxy](https://github.com/wanproxy/wanproxy) plus the demo backend and the
+web front-end that drives it.
 
-| Directory      | What it is                                                                                                                                                                                                                                                             |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wanproxy/`    | The original C++ WANProxy (reference implementation)                                                                                                                                                                                                                   |
-| `wanproxy.go/` | **Go proxy port** — xcodec dedup codec, pipe protocol, zlib, SSH transport, XCDFS disk cache, TCP/SOCKS/SSH proxies, config system, monitor, `tack`/`xcdump`/`fwdproxy` tools. Built on the Go standard library.                                                       |
-| `wanproxy.js/` | **TypeScript proxy port** — the same feature set on Node built-ins (`net`/`zlib`/`crypto`/`http`): classic `wanproxy.conf` + JSON config, XCDFS disk cache, memory/pair/null caches, SSH-2 transport, TCP/SOCKS proxies, monitor, and `tack`/`xcdump`/`fwdproxy` CLIs. |
-| `srv.go/`      | **Go SRV** (yukino_http) — spawns the wanproxy.go fleet + SSH echo, serves the file/monitor/bench/experiment/tools APIs.                                                                                                                                               |
-| `srv.js/`      | **NestJS SRV** — the TypeScript counterpart, driving wanproxy.js: spawns the daemon and serves the same file/monitor/bench/experiment/tools APIs.                                                                                                                      |
-| `web/`         | React + TailwindCSS demo front-end (works with either SRV).                                                                                                                                                                                                            |
-| `boot.js`      | Stack orchestrator: builds, runs, stops and tests either backend + web. The `Makefile` is a thin wrapper over it.                                                                                                                                                      |
+| Directory      | What it is                                                                                                                                                                                                                          |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wanproxy.go/` | **Go proxy port** — xcodec dedup codec, pipe protocol, zlib, SSH transport, XCDFS disk cache, TCP/SOCKS/SSH proxies, config system, monitor, `tack`/`xcdump`/`fwdproxy` tools. Built on the Go standard library.                     |
+| `srv.go/`      | **Go SRV** (yukino_http) — spawns the wanproxy.go fleet and SSH echo, and serves the file/monitor/bench/experiment/tools APIs.                                                                                                       |
+| `web/`         | React + TailwindCSS demo front-end.                                                                                                                                                                                                  |
 
 ## Demo quickstart
 
-Prerequisites: Node ≥ 20 and pnpm (both stacks); Go ≥ 1.26 (Go stack only).
+Prerequisites: Go ≥ 1.26; Node ≥ 20 and pnpm for the web front-end.
 
 ```sh
-pnpm install     # once: installs the JS workspace (wanproxy.js, srv.js, web)
-make install     # builds both backends (Go tools + srv.go, wanproxy.js + srv.js)
-
-# TypeScript stack (srv.js + wanproxy.js)
-make dev-js      # NestJS SRV (:3101) + web (:5173), foreground
-
-# Go stack (srv.go + wanproxy.go)
-make dev-go      # yukino_http SRV (:3101) + web (:5173), foreground
+make install     # installs web dependencies and builds the Go backend
+make dev         # SRV (:3101) + web (:5173), foreground
 ```
 
-Open http://localhost:5173. `make` defaults to the Go stack; pass `STACK=js`
-(e.g. `make STACK=js dev`) or use the explicit `-js` targets to select the
-TypeScript stack. `make start[-go|-js]` / `make stop` run the same stack
-backgrounded (logs and pidfiles under `<srv>/data/`); `make help` lists every
-target. All orchestration lives in `boot.js` — the Makefile only forwards to
-`node boot.js <command>`.
+Open http://localhost:5173. `make start` / `make stop` run the same stack in
+the background (logs and pidfiles under `srv.go/data/`); `make help` lists
+every target. `make srv` runs only the backend, and `make web` runs only the
+front-end. All targets forward to `srv.go/cmd/stack`, a cross-platform Go
+orchestrator.
 
 On first boot the SRV renders its `demo/wanproxy.conf.template`, builds the
 proxy if needed, and spawns the proxy fleet with an HTTP monitor on `:9901`
-(both stacks also start an SSH echo server on `:8349`).
+plus an SSH echo server on `:8349`.
 
 ### What the demo shows
 
@@ -62,52 +50,30 @@ proxy if needed, and spawns the proxy fleet with an HTTP monitor on `:9901`
 - **Inspector** — frame-level analysis of captured XCDFS streams using
   the ported `tack` and `xcdump` tools.
 
-Stack coverage: both stacks now cover every demo scenario end to end —
-direct / passthrough / zlib / xcodec / WAN / SOCKS / SSH chain — with
-timing, throughput, SHA-256 integrity, and the per-codec wire-byte counters
-(`track_statistics`), so A/B experiments report real wire savings on either
-stack. The JS stack runs the SSH chain over the wanproxy.js SSH-SSH proxy
-(codec spliced through the encrypted link) and its `ssh-echo` endpoint; see
-[`wanproxy.js/README.md`](wanproxy.js/README.md) (§ Differences from the Go
-port, § Residual Gaps) for the one remaining protocol-level difference
-between the stacks and the tradeoff behind it.
+The demo covers every scenario end to end — direct / passthrough / zlib /
+xcodec / WAN / SOCKS / SSH chain — with timing, throughput, SHA-256
+integrity, and the per-codec wire-byte counters (`track_statistics`), so A/B
+experiments report real wire savings.
 
 ### Demo port map
 
 | Port               | Role                                           |
 | ------------------ | ---------------------------------------------- |
 | 5173               | Vite dev server (web)                          |
-| 3101               | SRV (`srv.go` or `srv.js`)                     |
+| 3101               | SRV (`srv.go`)                                 |
 | 9901               | wanproxy daemon HTTP monitor                   |
 | 8310 / 8311 / 8312 | passthrough / zlib / xcodec single-hop proxies |
 | 8320 → 8321        | WAN chain (wan-a → wan-b, xcodec dedup)        |
 | 8330               | SOCKS proxy                                    |
 | 8340 → 8341        | SSH transport chain (ssh-a → ssh-b)            |
-| 8349               | SSH echo server (wanbench / ssh-echo)          |
+| 8349               | SSH echo server (wanbench)                     |
 
 ## Port details
 
 - Go proxy: [`wanproxy.go/README.md`](wanproxy.go/README.md) — package layout
   (C++ → Go migration map), parity evidence (KAT vectors and golden
   snapshots), pipeline mapping, and deviation notes.
-- TypeScript proxy: [`wanproxy.js/README.md`](wanproxy.js/README.md) — the
-  classic `wanproxy.conf` parser, XCDFS disk cache, SSH transport, monitor
-  endpoints, the `tack`/`xcdump`/`fwdproxy` CLIs, and a faithful account of
-  where its relay differs from the Go port (crossed decode responses and
-  half-close semantics) and why.
-- NestJS SRV: [`srv.js/README.md`](srv.js/README.md) — the HTTP API,
-  wanproxy.js integration, and its differences from the Go srv.
-
-### Cross-stack parity
-
-The Go and TypeScript ports are golden-tested to be byte-identical at the
-codec/session layer, and every demo scenario runs end to end on both stacks
-with comparable A/B numbers. The single remaining protocol-level difference
-lives in the TypeScript relay integration layer: crossed decode responses
-(`<ASK>`/`<LEARN>`/`<ADVANCE>`/`<EOS_ACK>`) are not routed back to the
-originating wire, and half-close is FIN-based rather than
-`<EOS>`/`<EOS_ACK>`-based. This is a deliberate, documented tradeoff rooted
-in the Node stream model; it does not affect any shipped scenario (the demo
-fleet shares one cache, so no `<ASK>`/`<LEARN>` exchange ever fires). See
-[`wanproxy.js/README.md`](wanproxy.js/README.md#differences-from-the-go-port)
-for the full analysis.
+- Go SRV: [`srv.go/README.md`](srv.go/README.md) — the HTTP API, demo fleet
+  lifecycle, and benchmark/experiment orchestration.
+- Web dashboard: [`web/README.md`](web/README.md) — pages, development
+  commands, and theming.

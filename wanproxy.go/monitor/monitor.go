@@ -1,8 +1,7 @@
 // Package monitor implements the WANProxy monitoring HTTP interface,
 // mirroring the C++ MonitorClient: an HTML configuration and statistics
 // export at /, per-object views at /object/<name>, plain-text exports
-// under the /:text prefix, plus the JSON status endpoint introduced by
-// the TypeScript port at /status.
+// under the /:text prefix, plus the JSON status endpoint at /status.
 package monitor
 
 import (

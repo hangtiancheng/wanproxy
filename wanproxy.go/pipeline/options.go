@@ -24,7 +24,7 @@ const (
 )
 
 // ParseMode maps a mode name to a Mode, accepting both the C++-style
-// combinations and the JSON config names used by the TypeScript port.
+// combinations and the JSON config names.
 func ParseMode(name string) (Mode, error) {
 	switch name {
 	case "none", "None", "":

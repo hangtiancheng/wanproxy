@@ -1,14 +1,12 @@
 // Package payload implements the deterministic benchmark payload
-// generator.  The exact same generator is implemented by the SRV
-// (TypeScript, src/common/payload.ts) so that both sides can verify
-// transfer integrity by SHA-256 without exchanging the payload.
+// generator used by the SRV's file and benchmark endpoints.  Transfer
+// integrity is verified by SHA-256 without exchanging the payload.
 //
 // LCG: x = (x*1103515245 + 12345) mod 2^31; byte = (x >> 16) & 0xff.
 // Note that mod 2^31 of the true product equals (product mod 2^32) &
-// 0x7fffffff because 2^32 ≡ 0 (mod 2^31), which lets the TypeScript
-// side use Math.imul.  Byte-identical output is critical: benchmarks
-// compare SHA-256 digests across the generator, the /api/bench/source
-// endpoint and the /api/files/generate endpoint.
+// 0x7fffffff because 2^32 ≡ 0 (mod 2^31).  Byte-identical output is
+// critical: benchmarks compare SHA-256 digests across the generator,
+// the /api/bench/source endpoint and the /api/files/generate endpoint.
 package payload
 
 import (

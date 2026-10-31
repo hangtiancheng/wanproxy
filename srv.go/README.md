@@ -1,6 +1,6 @@
 # srv.go — Go SRV for the wanproxy demo
 
-Go replacement for the former NestJS SRV, built on
+Go SRV for the WANProxy demo, built on
 [`yukino_http`](https://github.com/hangtiancheng/yukino.go/tree/main/libs/yukino_http).
 One process does everything:
 
@@ -104,6 +104,7 @@ the file generator, benchmark runner and experiments.
 ```
 cmd/server      main: daemon + services + yukino_http app
 cmd/wanbench    standalone benchmark CLI (same runner as the API)
+cmd/stack       cross-platform demo orchestrator used by the top-level Makefile
 internal/paths  repo/port resolution (SRV_ROOT, data/, ports)
 internal/daemon fleet lifecycle: build bins, host key, config render,
                 spawn wanproxy, SSH echo, Restart(clearCache)

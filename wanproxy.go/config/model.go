@@ -2,7 +2,7 @@
 //
 //   - the classic wanproxy.conf directive format of the C++ original
 //     (create/set/activate with $object.member references), and
-//   - the JSON format introduced by the TypeScript port.
+//   - the JSON configuration format.
 //
 // Both produce the same runtime model consumed by the proxy fleet.
 package config
@@ -81,7 +81,7 @@ type Config struct {
 	Monitor      *MonitorConfig
 
 	// LogLevel is the most detailed level requested by log-mask
-	// objects, kept like the TypeScript port's single-level view.
+	// objects, kept as a single-level view.
 	LogLevel slog.Level
 
 	// LogMasks lists the activated log-mask objects in activation

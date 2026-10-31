@@ -12,7 +12,7 @@ import (
 )
 
 // JSONNetworkEndpoint is the {"host": ..., "port": ...} form used by the
-// TypeScript port's configuration.
+// JSON configuration.
 type JSONNetworkEndpoint struct {
 	Host string `json:"host"`
 	Port int    `json:"port"`
@@ -51,8 +51,8 @@ type JSONFileConfig struct {
 	Monitor      *JSONMonitorConfig     `json:"monitor,omitempty"`
 }
 
-// ParseJSON parses the JSON configuration format introduced by the
-// TypeScript port.  The codec role maps onto the C++ model: "incoming"
+// ParseJSON parses the JSON configuration format.  The codec role maps
+// onto the C++ model: "incoming"
 // attaches the codec to the peer (upstream) side, "outgoing" attaches it
 // to the interface (listen) side.
 func ParseJSON(data []byte) (*Config, error) {

@@ -43,7 +43,7 @@ const nav = [
 ];
 
 const backend = [
-  { icon: Server, label: "SRV", value: "NestJS :3101" },
+  { icon: Server, label: "SRV", value: "srv.go :3101" },
   { icon: Waypoints, label: "Proxy", value: "wanproxy.go daemon" },
   { icon: Activity, label: "Monitor", value: ":9901/status" },
 ];

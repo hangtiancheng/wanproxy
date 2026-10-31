@@ -6,9 +6,7 @@ import (
 	"testing"
 )
 
-// The golden wire snapshots below pin the same byte encodings as the
-// TypeScript port's test/golden/wire-snapshots.spec.ts, which in turn
-// mirrors the C++ wire format.
+// The golden wire snapshots below pin the C++ wire format.
 
 func mustHex(t *testing.T, s string) []byte {
 	t.Helper()

@@ -7,7 +7,7 @@ import (
 
 // streamChunk is the input accumulation size used by the streaming
 // readers; it is a multiple of SegmentLength so chunk boundaries never
-// force escapes, matching the TypeScript codec transforms.
+// force escapes.
 const streamChunk = PipeMaxPayloadFrame
 
 // EncodeReader wraps src and presents its XCodec-encoded form.  The

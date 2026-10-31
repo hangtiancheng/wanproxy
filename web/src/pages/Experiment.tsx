@@ -161,7 +161,7 @@ const chartColor = (i: number) => CHART_COLORS[i % CHART_COLORS.length];
 const bytesTooltipFormatter = (value: unknown, name: unknown) => (
   <div className="flex w-full flex-1 items-center justify-between gap-3 leading-none">
     <span className="text-muted-foreground">{String(name)}</span>
-    <span className="font-mono font-medium text-foreground tabular-nums">
+    <span className="text-foreground font-mono font-medium tabular-nums">
       {formatBytes(Number(value))}
     </span>
   </div>
@@ -170,7 +170,7 @@ const bytesTooltipFormatter = (value: unknown, name: unknown) => (
 const percentTooltipFormatter = (value: unknown, name: unknown) => (
   <div className="flex w-full flex-1 items-center justify-between gap-3 leading-none">
     <span className="text-muted-foreground">{String(name)}</span>
-    <span className="font-mono font-medium text-foreground tabular-nums">
+    <span className="text-foreground font-mono font-medium tabular-nums">
       {Number(value).toFixed(1)}%
     </span>
   </div>
@@ -603,8 +603,8 @@ export function Experiment() {
               <CardHeader>
                 <CardTitle>Application vs Wire Bytes</CardTitle>
                 <CardDescription>
-                  Total bytes per arm — the gap between app and wire is what
-                  the codec removes
+                  Total bytes per arm — the gap between app and wire is what the
+                  codec removes
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -631,11 +631,23 @@ export function Experiment() {
                       fontSize={11}
                     />
                     <ChartTooltip
-                      content={<ChartTooltipContent formatter={bytesTooltipFormatter} />}
+                      content={
+                        <ChartTooltipContent
+                          formatter={bytesTooltipFormatter}
+                        />
+                      }
                     />
                     <ChartLegend content={<ChartLegendContent />} />
-                    <Bar dataKey="app" fill="var(--color-app)" radius={[0, 4, 4, 0]} />
-                    <Bar dataKey="wire" fill="var(--color-wire)" radius={[0, 4, 4, 0]} />
+                    <Bar
+                      dataKey="app"
+                      fill="var(--color-app)"
+                      radius={[0, 4, 4, 0]}
+                    />
+                    <Bar
+                      dataKey="wire"
+                      fill="var(--color-wire)"
+                      radius={[0, 4, 4, 0]}
+                    />
                   </BarChart>
                 </ChartContainer>
               </CardContent>
@@ -793,7 +805,9 @@ export function Experiment() {
                     />
                     <ChartTooltip
                       content={
-                        <ChartTooltipContent formatter={percentTooltipFormatter} />
+                        <ChartTooltipContent
+                          formatter={percentTooltipFormatter}
+                        />
                       }
                     />
                     <ChartLegend content={<ChartLegendContent />} />

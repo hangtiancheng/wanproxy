@@ -1,5 +1,5 @@
-// Package validation is the Go port of the TypeScript port's large-file
-// XCodec correctness harness: it streams a file through an XCodec
+// Package validation implements a large-file XCodec correctness
+// harness: it streams a file through an XCodec
 // encode/decode roundtrip and verifies that the SHA-256 of the decoded
 // stream matches the original without loading the whole file into
 // memory.
@@ -16,7 +16,7 @@ import (
 	"github.com/hangtiancheng/wanproxy/wanproxy.go/xcodec"
 )
 
-// GiB and MiB size constants, as in the TypeScript harness.
+// GiB and MiB size constants.
 const (
 	GiB = 1024 * 1024 * 1024
 	MiB = 1024 * 1024
@@ -32,7 +32,7 @@ type Result struct {
 }
 
 // CreateRandomFile writes size bytes of deterministic pseudo-random data
-// to path, chunk by chunk, mirroring the TypeScript fixture generator.
+// to path, chunk by chunk, using a deterministic seed.
 func CreateRandomFile(path string, size int64, seed int64) error {
 	f, err := os.Create(path)
 	if err != nil {
@@ -75,7 +75,7 @@ func HashFile(path string) (string, error) {
 
 // VerifyXCodecFile streams the file through an XCodec encode/decode
 // roundtrip with memory caches bounded to cacheSegments segments and
-// compares SHA-256 hashes, like the TypeScript xcodec-file-verifier.
+// compares SHA-256 hashes.
 func VerifyXCodecFile(path string, cacheSegments int) (*Result, error) {
 	original, err := HashFile(path)
 	if err != nil {

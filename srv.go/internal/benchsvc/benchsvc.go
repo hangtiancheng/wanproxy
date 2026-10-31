@@ -1,6 +1,5 @@
-// Package benchsvc is the Go port of src/bench/bench.service.ts.  It
-// guards against concurrent runs, resolves a scenario, samples the
-// monitor codec counters before/after, and executes the benchmark
+// Package benchsvc guards against concurrent runs, resolves a scenario,
+// samples the monitor codec counters before/after, and executes the benchmark
 // in-process via the bench library.
 package benchsvc
 

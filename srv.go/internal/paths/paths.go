@@ -1,5 +1,5 @@
-// Package paths resolves the repository layout and demo ports.  It is
-// the Go port of src/common/paths.ts.  SRV_ROOT is located relative to
+// Package paths resolves the repository layout and demo ports.
+// SRV_ROOT is located relative to
 // the source tree (which is present both for `go run` and for compiled
 // binaries built from this checkout), with environment and
 // executable/cwd fallbacks.
@@ -99,7 +99,7 @@ func envInt(key string, def int) int {
 }
 
 // SRVPort is the HTTP listen port (and the origin the proxies forward
-// to).  PORT takes precedence over SRV_PORT, matching main.ts.
+// to).  PORT takes precedence over SRV_PORT.
 func SRVPort() int {
 	if v := os.Getenv("PORT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
