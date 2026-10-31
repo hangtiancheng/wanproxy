@@ -1,4 +1,4 @@
-# srv — Go SRV for the wanproxy demo
+# srv.go — Go SRV for the wanproxy demo
 
 Go replacement for the former NestJS SRV, built on
 [`yukino_http`](https://github.com/hangtiancheng/yukino.go/tree/main/libs/yukino_http).
@@ -13,7 +13,7 @@ One process does everything:
 ## Run
 
 ```bash
-cd srv
+cd srv.go
 go run ./cmd/server          # or: make build && ./bin/wanproxy-srv
 ```
 

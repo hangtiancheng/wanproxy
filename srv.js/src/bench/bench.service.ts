@@ -359,6 +359,16 @@ export class BenchService {
         incomingToCodecBytes: after.incomingToCodecBytes - before.incomingToCodecBytes,
         outgoingToCodecBytes: after.outgoingToCodecBytes - before.outgoingToCodecBytes,
       };
+      // wanproxy.js does not yet surface the per-codec byte counters, so the
+      // deltas read as zero.  Treat an all-zero delta as "not tracked" and
+      // omit stats, letting the experiment fall back to the size estimate
+      // rather than reporting a misleading 100% wire reduction.
+      const tracked =
+        raw.incomingToCodecBytes !== 0 ||
+        raw.codecToOutgoingBytes !== 0 ||
+        raw.outgoingToCodecBytes !== 0 ||
+        raw.codecToIncomingBytes !== 0;
+      if (tracked) {
       let appBytes = 0;
       let wireBytes = 0;
       if (direction === 'upload' || direction === 'roundtrip') {
@@ -377,6 +387,7 @@ export class BenchService {
         raw,
         wireBytes,
       };
+      }
     }
     return result;
   }

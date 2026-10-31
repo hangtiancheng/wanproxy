@@ -140,7 +140,7 @@ describe('srv.js HTTP API (e2e)', () => {
       .post('/api/bench/sink')
       .set('Content-Type', 'application/octet-stream')
       .send(body)
-      .expect(201);
+      .expect(200);
     expect(res.body.bytes).toBe(body.length);
     expect(res.body.sha256).toBe(
       createHash('sha256').update(body).digest('hex'),

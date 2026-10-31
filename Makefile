@@ -1,4 +1,4 @@
-# WANProxy demo stack — one-command orchestration for srv (Go BFF) + web (Vite).
+# WANProxy demo stack — one-command orchestration for srv.go (Go BFF) + web (Vite).
 #
 #   make          start backend + frontend in one terminal (Ctrl-C stops both)
 #   make help     list every target
@@ -15,11 +15,11 @@ WEB_PORT     ?= 5173
 MONITOR_PORT ?= 9901
 SSH_ECHO_PORT ?= 8349
 
-DATA_DIR := srv/data
+DATA_DIR := srv.go/data
 PID_DIR  := $(DATA_DIR)/pids
 SRV_LOG  := $(DATA_DIR)/server.log
 WEB_LOG  := $(DATA_DIR)/web.log
-SRV_BIN  := srv/bin/wanproxy-srv
+SRV_BIN  := srv.go/bin/wanproxy-srv
 
 .DEFAULT_GOAL := dev
 
@@ -106,8 +106,8 @@ open:
 # ------------------------------------------------------------------- builds
 
 build-srv:
-	@mkdir -p srv/bin
-	cd srv && $(GO) build -o bin/wanproxy-srv ./cmd/server
+	@mkdir -p srv.go/bin
+	cd srv.go && $(GO) build -o bin/wanproxy-srv ./cmd/server
 
 install:
 	pnpm install
@@ -121,9 +121,9 @@ build:
 
 test:
 	$(MAKE) -C wanproxy.go test
-	cd srv && $(GO) vet ./... && $(GO) test ./...
+	cd srv.go && $(GO) vet ./... && $(GO) test ./...
 	cd web && pnpm build && pnpm lint
 
 clean:
 	$(MAKE) -C wanproxy.go clean
-	rm -rf srv/bin web/dist
+	rm -rf srv.go/bin web/dist

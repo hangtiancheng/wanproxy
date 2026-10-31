@@ -12,13 +12,13 @@ import (
 	"strconv"
 )
 
-// SRV_ROOT is the srv/ directory (this module's root).
+// SRV_ROOT is the srv.go/ directory (this module's root).
 var SRV_ROOT = resolveRoot()
 
-// REPO_ROOT is the directory containing srv/, web/ and wanproxy.go/.
+// REPO_ROOT is the directory containing srv.go/, web/ and wanproxy.go/.
 var REPO_ROOT = filepath.Dir(SRV_ROOT)
 
-// WANPROXY_GO_ROOT is the wanproxy.go/ checkout next to srv/.
+// WANPROXY_GO_ROOT is the wanproxy.go/ checkout next to srv.go/.
 var WANPROXY_GO_ROOT = filepath.Join(REPO_ROOT, "wanproxy.go")
 
 var (
@@ -43,7 +43,7 @@ func resolveRoot() string {
 		}
 		return env
 	}
-	// Source-relative: this file lives at <srv>/internal/paths/paths.go.
+	// Source-relative: this file lives at <srv.go>/internal/paths/paths.go.
 	if _, file, _, ok := runtime.Caller(0); ok {
 		cand := filepath.Dir(filepath.Dir(filepath.Dir(file)))
 		if looksLikeRoot(cand) {

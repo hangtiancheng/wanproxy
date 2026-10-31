@@ -23,7 +23,7 @@ pnpm dev        # http://localhost:5173
 ```
 
 The dashboard expects the Go SRV on `http://127.0.0.1:3101`
-(`cd ../srv && go run ./cmd/server`), which spawns the wanproxy.go demo
+(`cd ../srv.go && go run ./cmd/server`), which spawns the wanproxy.go demo
 fleet and exposes the monitor/file/bench/experiment APIs. Without it, pages
 render their offline states.
 
