@@ -6,11 +6,13 @@ const entries = {
   index: "src/index.ts",
   "cli/index": "src/cli/index.ts",
   "cli/fwdproxy": "src/cli/fwdproxy.ts",
+  "cli/ssh-echo": "src/cli/ssh-echo.ts",
   "cli/tack": "src/cli/tack.ts",
   "cli/xcdump": "src/cli/xcdump.ts",
   "demo/echo-server": "src/demo/echo-server.ts",
   "demo/socks5-client": "src/demo/socks5-client.ts",
   "demo/tcp-client": "src/demo/tcp-client.ts",
+  "ssh/index": "src/ssh/index.ts",
 };
 
 const external = new Set([

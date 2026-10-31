@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { ClassicParser } from "@/config/classic.js";
 import type { RuntimeConfig } from "@/config/model.js";
 import { RuntimeFleet } from "@/proxy/runtime-fleet.js";
+import { RsaHostKey } from "@/ssh/index.js";
 import { concatByteArrays } from "@/xcodec/index.js";
 
 async function listen(server: Server): Promise<number> {
@@ -159,7 +160,7 @@ describe("RuntimeFleet", () => {
     }
   });
 
-  it("rejects SSH-SSH proxies at runtime", () => {
+  it("builds SSH-SSH proxies at runtime", () => {
     const config: RuntimeConfig = {
       caches: [],
       disks: [],
@@ -174,17 +175,18 @@ describe("RuntimeFleet", () => {
           peer: { family: "IP", host: "h", path: "", port: "2" },
           peerCodec: undefined,
           ssh: {
-            hostKey: undefined as never,
+            hostKey: RsaHostKey.generate(),
             hostKeyPath: "k.pem",
           },
         },
       ],
       socksProxies: [],
     };
-    expect(() => new RuntimeFleet(config)).toThrow(/SSH-SSH/);
+    // The fleet now runs SSH-SSH proxies instead of rejecting them.
+    expect(() => new RuntimeFleet(config)).not.toThrow();
   });
 
-  it("rejects combined interface and peer codecs at runtime", () => {
+  it("builds combined interface and peer codec proxies at runtime", () => {
     const spec = {
       cache: undefined,
       compressorLevel: -1,
@@ -210,6 +212,7 @@ describe("RuntimeFleet", () => {
       ],
       socksProxies: [],
     };
-    expect(() => new RuntimeFleet(config)).toThrow(/combined interface/);
+    // The fleet now runs dual-codec proxies instead of rejecting them.
+    expect(() => new RuntimeFleet(config)).not.toThrow();
   });
 });

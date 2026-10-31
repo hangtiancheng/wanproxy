@@ -68,6 +68,7 @@ export interface SrvPaths {
   readonly wanproxyCli: string;
   readonly tackCli: string;
   readonly xcdumpCli: string;
+  readonly sshEchoCli: string;
 }
 
 /** getPaths resolves every runtime path from the current srvRoot(). */
@@ -95,6 +96,7 @@ export function getPaths(): SrvPaths {
     wanproxyJsRoot,
     xcachePath: join(dataDir, 'wanproxy.xcache'),
     xcdumpCli: join(wanproxyJsRoot, 'dist', 'cli', 'xcdump.js'),
+    sshEchoCli: join(wanproxyJsRoot, 'dist', 'cli', 'ssh-echo.js'),
   };
 }
 

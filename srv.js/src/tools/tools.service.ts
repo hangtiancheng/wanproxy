@@ -263,7 +263,10 @@ export function parseDump(dump: string): FrameSummary {
     }
   }
 
-  const list: HashCount[] = order.map((h) => ({ count: counts.get(h)!, hash: h }));
+  const list: HashCount[] = order.map((h) => ({
+    count: counts.get(h)!,
+    hash: h,
+  }));
   list.sort((a, b) => b.count - a.count);
   summary.topHashes = list.slice(0, 8);
   return summary;

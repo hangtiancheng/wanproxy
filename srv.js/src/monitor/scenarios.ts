@@ -1,8 +1,7 @@
 /**
  * The demo benchmark topologies, copied from srv/internal/monitor/monitor.go
- * (and matching web/src/lib/api.ts).  The SSH chain is omitted because the
- * wanproxy.js runtime does not yet splice a codec pipeline through an
- * SSH-SSH proxy; every other scenario is driven by wanproxy.js.
+ * (and matching web/src/lib/api.ts).  Every scenario, including the SSH
+ * chain, is driven by wanproxy.js.
  */
 
 import { srvPort } from '../common/paths.js';
@@ -87,6 +86,17 @@ export function scenarios(): Scenario[] {
       target: srvTarget,
       statsProxy: 'proxy-socks',
       protocol: 'SOCKS5 + TCP + HTTP/1.1',
+    },
+    {
+      id: 'ssh-chain',
+      label: 'SSH-to-SSH encrypted chain (dual proxy)',
+      description:
+        'SSH transport (DH group-exchange + AES-128-CTR + HMAC-SHA1) carrying an XCodec+zlib WAN chain, terminating at an SSH echo server',
+      kind: 'ssh',
+      proxy: '127.0.0.1:8340',
+      statsProxy: 'proxy-ssh-a',
+      statsCodec: 'peerCodec',
+      protocol: 'SSH-2 + XCodec + zlib',
     },
   ];
 }

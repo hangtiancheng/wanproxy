@@ -9,7 +9,7 @@
   "scripts": {
     "build": "nest build",
     "deploy": "nest deploy",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format": "prettier -w \"src/**/*.ts\" \"test/**/*.ts\" --experimental-cli",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
@@ -26,7 +26,8 @@
     "@nestjs/core": "^12.3.2",
     "@nestjs/platform-express": "^12.3.2",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "wanproxy-js": "workspace:*"
   },
   "devDependencies": {
     "@nestjs/cli": "^12.0.11",

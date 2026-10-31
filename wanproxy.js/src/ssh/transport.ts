@@ -21,6 +21,12 @@ import { SshSession, type SshRole } from "./session.js";
 const DH_GROUP_MIN = 1024;
 const DH_GROUP_MAX = 8192;
 const MAX_PACKET_LENGTH = 256 * 1024;
+/**
+ * The 0xff application packet tag used when a codec is active on a hop,
+ * mirroring SSHStream::receive_complete / write_do in the C++ code and
+ * appPacketTag in the Go transport.
+ */
+const APP_PACKET_TAG = 0xff;
 
 export interface SshTransportOptions {
   readonly role: SshRole;
@@ -28,6 +34,14 @@ export interface SshTransportOptions {
   readonly hostKey?: RsaHostKey;
   /** Software comment for the identification string. */
   readonly software?: string;
+  /**
+   * Tagged enables the 0xff application packet tag used when a codec is
+   * active on this hop, mirroring SSHStream's framing choice.  Untagged
+   * hops carry length-prefixed framing internally, exactly like the C++
+   * implementation.  Only meaningful for the app-stream API
+   * (writeApp/onAppData); the raw packet API (send/onPayload) is unaffected.
+   */
+  readonly tagged?: boolean;
 }
 
 type HandshakeState =
@@ -45,6 +59,7 @@ export class SshTransport {
   private readonly session: SshSession;
   private readonly hostKey: RsaHostKey | undefined;
   private readonly software: string;
+  private readonly tagged: boolean;
 
   private input = Buffer.alloc(0);
   private firstBlockPlain: Buffer | undefined;
@@ -65,6 +80,9 @@ export class SshTransport {
   private newkeysReceived = false;
 
   private payloadHandler: ((payload: Uint8Array) => void) | undefined;
+  private appDataHandler: ((data: Uint8Array) => void) | undefined;
+  /** Incomplete untagged [uint32 length][data] frames awaiting more bytes. */
+  private writeBuf = Buffer.alloc(0);
   /**
    * Payloads that arrive after the handshake but before a handler is
    * registered are buffered here.  This matters because NEWKEYS and the
@@ -85,6 +103,7 @@ export class SshTransport {
     this.session = new SshSession(options.role);
     this.hostKey = options.hostKey;
     this.software = options.software ?? "WANProxy.js";
+    this.tagged = options.tagged ?? false;
     this.ready = new Promise<void>((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
@@ -113,6 +132,36 @@ export class SshTransport {
     this.sendPacket(Buffer.from(payload));
   }
 
+  /**
+   * writeApp sends application bytes using the hop's framing, mirroring the
+   * Go Transport.Write: tagged hops send one [0xff][data] packet per call;
+   * untagged hops accumulate [uint32 length][data] frames and send each
+   * complete frame as one packet.
+   */
+  public writeApp(data: Uint8Array): void {
+    if (this.state !== "ready") {
+      throw new Error("ssh: transport is not ready");
+    }
+    if (this.tagged) {
+      const payload = Buffer.allocUnsafe(1 + data.length);
+      payload[0] = APP_PACKET_TAG;
+      payload.set(data, 1);
+      this.sendPacket(payload);
+      return;
+    }
+    this.writeBuf = Buffer.concat([this.writeBuf, Buffer.from(data)]);
+    while (this.writeBuf.length > 4) {
+      const frameLen = this.writeBuf.readUInt32BE(0);
+      if (frameLen > this.writeBuf.length - 4) {
+        break; // Wait for more write data.
+      }
+      if (frameLen > 0) {
+        this.sendPacket(Buffer.from(this.writeBuf.subarray(4, 4 + frameLen)));
+      }
+      this.writeBuf = this.writeBuf.subarray(4 + frameLen);
+    }
+  }
+
   public onPayload(handler: (payload: Uint8Array) => void): void {
     this.payloadHandler = handler;
     if (this.pendingPayloads.length > 0) {
@@ -123,6 +172,50 @@ export class SshTransport {
       for (const payload of buffered) {
         handler(payload);
       }
+    }
+  }
+
+  /**
+   * onAppData registers a handler for the decrypted application byte stream
+   * using the hop's framing, mirroring the Go Transport.Read/deliverApp:
+   * tagged streams drop the 0xff prefix, untagged streams gain a uint32
+   * length prefix.
+   */
+  public onAppData(handler: (data: Uint8Array) => void): void {
+    this.appDataHandler = handler;
+    if (this.pendingPayloads.length > 0) {
+      const buffered = this.pendingPayloads.splice(
+        0,
+        this.pendingPayloads.length,
+      );
+      for (const payload of buffered) {
+        handler(this.deliverApp(payload));
+      }
+    }
+  }
+
+  /** deliverApp applies the hop's receive framing to one packet payload. */
+  private deliverApp(payload: Uint8Array): Uint8Array {
+    if (this.tagged) {
+      if (payload.length < 2 || payload[0] !== APP_PACKET_TAG) {
+        throw new Error("ssh: got encoded packet with wrong message");
+      }
+      return payload.subarray(1);
+    }
+    const out = Buffer.allocUnsafe(4 + payload.length);
+    out.writeUInt32BE(payload.length, 0);
+    out.set(payload, 4);
+    return out;
+  }
+
+  /**
+   * closeWrite half-closes the underlying connection's write side, as the
+   * relay does for plain TCP hops.
+   */
+  public closeWrite(): void {
+    const socket = this.socket as { end?: () => void };
+    if (typeof socket.end === "function") {
+      socket.end();
     }
   }
 
@@ -168,6 +261,17 @@ export class SshTransport {
     }
     this.settled = true;
     this.rejectReady(error);
+  }
+
+  /** deliverReady routes a ready-state packet to the registered consumer. */
+  private deliverReady(payload: Uint8Array): void {
+    if (this.appDataHandler !== undefined) {
+      this.appDataHandler(this.deliverApp(payload));
+    } else if (this.payloadHandler !== undefined) {
+      this.payloadHandler(payload);
+    } else {
+      this.pendingPayloads.push(payload);
+    }
   }
 
   private becomeReady(): void {
@@ -235,11 +339,7 @@ export class SshTransport {
 
   private handlePacket(payload: Uint8Array): void {
     if (this.state === "ready") {
-      if (this.payloadHandler !== undefined) {
-        this.payloadHandler(payload);
-      } else {
-        this.pendingPayloads.push(payload);
-      }
+      this.deliverReady(payload);
       return;
     }
 

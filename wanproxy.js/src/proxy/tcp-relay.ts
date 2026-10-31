@@ -1,53 +1,159 @@
-import type { Socket } from "node:net";
+import type { Duplex } from "node:stream";
 import { Transform } from "node:stream";
 
 import type { CodecConfig } from "../config/codec-config.js";
 import type { CodecStats } from "../pipeline/codec-stats.js";
 import type { PipelineRuntimeDeps } from "../pipeline/pipeline-builder.js";
+import type { PipelineMode } from "../pipeline/pipeline-options.js";
 import { buildCodecPipeline } from "../pipeline/pipeline-builder.js";
-import { proxyPipelineOptions } from "./pipeline-options.js";
+import type { XCodecCache } from "../xcodec/cache-interface.js";
 import { createRelayCloseController } from "./relay-close.js";
 import type { RelayResult } from "./relay-result.js";
 
+/**
+ * RelayCodecSpec is one codec slot of a relay (interface or peer), carrying
+ * the pipeline mode, the optional zlib level, and the XCodec cache backing
+ * the session.  It mirrors the Go pipeline.CodecSpec fields the relay needs.
+ */
+export interface RelayCodecSpec {
+  readonly mode: PipelineMode;
+  readonly compressorLevel?: number;
+  readonly cache?: XCodecCache;
+}
+
+/**
+ * RelayStats holds the per-codec byte counters, mirroring the Go relay's
+ * ifaceCodec.Stats / peerCodec.Stats.  Either may be absent when the codec
+ * was not activated with track_statistics.
+ */
+export interface RelayStats {
+  readonly iface?: CodecStats;
+  readonly peer?: CodecStats;
+}
+
+/**
+ * relayTcpSockets relays a single-codec TCP proxy, mirroring the C++
+ * splice and the Go relay.  It is a thin wrapper over relayStreams that
+ * places the codec on the interface or peer slot according to its role.
+ */
 export function relayTcpSockets(
-  local: Socket,
-  upstream: Socket,
+  local: Duplex,
+  upstream: Duplex,
   codec: CodecConfig,
   deps: PipelineRuntimeDeps = {},
   stats?: CodecStats,
 ): RelayResult {
-  const send = buildCodecPipeline(
-    proxyPipelineOptions(codec, "send"),
-    deps,
-  ).transforms;
-  const receive = buildCodecPipeline(
-    proxyPipelineOptions(codec, "receive"),
-    deps,
-  ).transforms;
-  // When statistics tracking is enabled, wrap each direction with counting
-  // pass-throughs at the socket boundaries, mirroring the Go relay's count
-  // callbacks: bytes read from the local socket enter the codec
-  // (incoming_to_codec), bytes written to the upstream socket leave it
-  // (codec_to_outgoing), and the receive direction is symmetric
-  // (outgoing_to_codec / codec_to_incoming).  The positions hold for both
-  // chain sides because a proxy's single codec always sits between its
-  // local and upstream sockets.
-  const sendChain =
+  const spec: RelayCodecSpec = {
+    ...(deps.cache === undefined ? {} : { cache: deps.cache }),
+    ...(codec.compressorLevel === undefined
+      ? {}
+      : { compressorLevel: codec.compressorLevel }),
+    mode: codec.mode,
+  };
+  const relayStats: RelayStats | undefined =
     stats === undefined
-      ? send
-      : [
-          countingStream((n) => stats.addIncomingToCodec(n)),
-          ...send,
-          countingStream((n) => stats.addCodecToOutgoing(n)),
-        ];
-  const receiveChain =
-    stats === undefined
-      ? receive
-      : [
-          countingStream((n) => stats.addOutgoingToCodec(n)),
-          ...receive,
-          countingStream((n) => stats.addCodecToIncoming(n)),
-        ];
+      ? undefined
+      : codec.role === "outgoing"
+        ? { iface: stats }
+        : { peer: stats };
+  return codec.role === "outgoing"
+    ? relayStreams(local, upstream, spec, undefined, relayStats)
+    : relayStreams(local, upstream, undefined, spec, relayStats);
+}
+
+/**
+ * relayStreams moves data between a local (interface side) and an upstream
+ * (peer side) duplex stream through the codec pipeline composed from the
+ * interface and peer codec specs, mirroring the Go Relay:
+ *
+ *	local → upstream: [interface decode] then [peer encode]
+ *	upstream → local: [peer decode] then [interface encode]
+ *
+ * where the first bracket applies when an interface codec is configured and
+ * the second when a peer codec is configured.  A single-codec proxy is the
+ * common case (one of the two specs is undefined); a proxy may also carry
+ * both, transcoding between the interface and peer codecs.
+ *
+ * When statistics are provided, counting pass-throughs are inserted at the
+ * four stream boundaries and — for dual-codec proxies — at the two internal
+ * boundaries between the codecs, mirroring the Go relay's count callbacks:
+ *
+ *	local read     → iface.incoming_to_codec  (or peer's when no iface)
+ *	upstream write → peer.codec_to_outgoing   (or iface's when no peer)
+ *	upstream read  → peer.outgoing_to_codec   (or iface's when no peer)
+ *	local write    → iface.codec_to_incoming  (or peer's when no iface)
+ *	send internal  → iface.codec_to_outgoing + peer.incoming_to_codec
+ *	recv internal  → peer.codec_to_incoming + iface.outgoing_to_codec
+ *
+ * Half-close is propagated by ending the destination write side when the
+ * source read side ends, while the destination's read side stays open
+ * (allowHalfOpen) so the reverse direction can still deliver crossed
+ * control frames.
+ */
+export function relayStreams(
+  local: Duplex,
+  upstream: Duplex,
+  iface: RelayCodecSpec | undefined,
+  peer: RelayCodecSpec | undefined,
+  stats?: RelayStats,
+): RelayResult {
+  const ifaceDecode = stageTransforms(iface, "outgoing", "send");
+  const peerEncode = stageTransforms(peer, "incoming", "send");
+  const peerDecode = stageTransforms(peer, "incoming", "receive");
+  const ifaceEncode = stageTransforms(iface, "outgoing", "receive");
+
+  const ifaceStats = stats?.iface;
+  const peerStats = stats?.peer;
+  const dual = iface !== undefined && peer !== undefined;
+
+  // local→upstream: [iface decode] then [peer encode], counted at the local
+  // read boundary, the (dual) internal boundary, and the upstream write
+  // boundary.
+  const sendChain: Transform[] = [];
+  const sendEnter = ifaceStats ?? peerStats;
+  if (sendEnter !== undefined) {
+    sendChain.push(countingStream((n) => sendEnter.addIncomingToCodec(n)));
+  }
+  sendChain.push(...ifaceDecode);
+  if (dual && ifaceStats !== undefined && peerStats !== undefined) {
+    sendChain.push(
+      countingStream((n) => {
+        ifaceStats.addCodecToOutgoing(n);
+        peerStats.addIncomingToCodec(n);
+      }),
+    );
+  }
+  sendChain.push(...peerEncode);
+  const sendExit = peerStats ?? ifaceStats;
+  if (sendExit !== undefined) {
+    sendChain.push(countingStream((n) => sendExit.addCodecToOutgoing(n)));
+  }
+
+  // upstream→local: [peer decode] then [iface encode], counted at the
+  // upstream read boundary, the (dual) internal boundary, and the local
+  // write boundary.
+  const receiveChain: Transform[] = [];
+  const receiveEnter = peerStats ?? ifaceStats;
+  if (receiveEnter !== undefined) {
+    receiveChain.push(
+      countingStream((n) => receiveEnter.addOutgoingToCodec(n)),
+    );
+  }
+  receiveChain.push(...peerDecode);
+  if (dual && ifaceStats !== undefined && peerStats !== undefined) {
+    receiveChain.push(
+      countingStream((n) => {
+        peerStats.addCodecToIncoming(n);
+        ifaceStats.addOutgoingToCodec(n);
+      }),
+    );
+  }
+  receiveChain.push(...ifaceEncode);
+  const receiveExit = ifaceStats ?? peerStats;
+  if (receiveExit !== undefined) {
+    receiveChain.push(countingStream((n) => receiveExit.addCodecToIncoming(n)));
+  }
+
   const streams = [...sendChain, ...receiveChain];
   const destroy = () => destroyAll(local, upstream, streams);
   const close = createRelayCloseController(local, upstream, streams, destroy);
@@ -65,17 +171,28 @@ export function relayTcpSockets(
 }
 
 /**
- * countingStream returns a pass-through transform that reports the length
- * of every chunk it forwards.  It adds no buffering, so relay timing and
- * half-close behaviour are unchanged.
+ * stageTransforms builds the transforms for one codec stage, or an empty
+ * array when the codec is absent or in pass-through mode.
  */
-function countingStream(count: (bytes: number) => void): Transform {
-  return new Transform({
-    transform(chunk, _encoding, callback) {
-      count(chunk.length);
-      callback(null, chunk);
+function stageTransforms(
+  spec: RelayCodecSpec | undefined,
+  role: "incoming" | "outgoing",
+  direction: "send" | "receive",
+): readonly Transform[] {
+  if (spec === undefined || spec.mode === "none") {
+    return [];
+  }
+  const deps: PipelineRuntimeDeps =
+    spec.cache === undefined ? {} : { cache: spec.cache };
+  return buildCodecPipeline(
+    {
+      compressorLevel: spec.compressorLevel,
+      direction,
+      mode: spec.mode,
+      role,
     },
-  });
+    deps,
+  ).transforms;
 }
 
 /**
@@ -89,9 +206,9 @@ function countingStream(count: (bytes: number) => void): Transform {
  * reset that loses delivered data.
  */
 function wireDirection(
-  source: Socket,
+  source: Duplex,
   transforms: readonly Transform[],
-  destination: Socket,
+  destination: Duplex,
 ): void {
   let current: NodeJS.ReadableStream = source;
   for (const transform of transforms) {
@@ -107,33 +224,33 @@ function wireDirection(
 
 /**
  * teardownGracefully closes the relay without resetting the connections.
- * Each socket's write side is half-closed and its read side is kept
+ * Each stream's write side is half-closed and its read side is kept
  * draining, so a peer's remaining bytes — including a trailing <EOS> — are
- * consumed and the socket reaches EOF instead of being abortively reset
+ * consumed and the stream reaches EOF instead of being abortively reset
  * with unread data outstanding.  This mirrors the Go relay's post-EOS
  * drain phase, which keeps reading the source until TCP EOF precisely so
  * the final close cannot discard data that is still in flight.
  */
-function teardownGracefully(local: Socket, upstream: Socket): void {
+function teardownGracefully(local: Duplex, upstream: Duplex): void {
   halfCloseAndDrain(local);
   halfCloseAndDrain(upstream);
 }
 
-function halfCloseAndDrain(socket: Socket): void {
-  if (socket.destroyed) {
+function halfCloseAndDrain(stream: Duplex): void {
+  if (stream.destroyed) {
     return;
   }
-  if (socket.writable) {
-    socket.end();
+  if (stream.writable) {
+    stream.end();
   }
-  // Keep consuming incoming data so the socket reaches EOF and closes
+  // Keep consuming incoming data so the stream reaches EOF and closes
   // gracefully rather than being reset with unread data outstanding.
-  socket.resume();
+  stream.resume();
 }
 
 function destroyAll(
-  local: Socket,
-  upstream: Socket,
+  local: Duplex,
+  upstream: Duplex,
   transforms: readonly Transform[],
 ): void {
   local.destroy();
@@ -141,4 +258,18 @@ function destroyAll(
   for (const transform of transforms) {
     transform.destroy();
   }
+}
+
+/**
+ * countingStream returns a pass-through transform that reports the length
+ * of every chunk it forwards.  It adds no buffering, so relay timing and
+ * half-close behaviour are unchanged.
+ */
+function countingStream(count: (bytes: number) => void): Transform {
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      count(chunk.length);
+      callback(null, chunk);
+    },
+  });
 }

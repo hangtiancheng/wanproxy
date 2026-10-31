@@ -107,8 +107,14 @@ export class FilesController {
     if (rangeHeader !== undefined && rangeHeader !== '') {
       const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
       if (match) {
-        start = match[1] !== '' && match[1] !== undefined ? Number.parseInt(match[1], 10) : 0;
-        end = match[2] !== '' && match[2] !== undefined ? Number.parseInt(match[2], 10) : total - 1;
+        start =
+          match[1] !== '' && match[1] !== undefined
+            ? Number.parseInt(match[1], 10)
+            : 0;
+        end =
+          match[2] !== '' && match[2] !== undefined
+            ? Number.parseInt(match[2], 10)
+            : total - 1;
       }
       if (start >= total || end >= total || start > end) {
         res.setHeader('Content-Range', `bytes */${total}`);

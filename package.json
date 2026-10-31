@@ -4,6 +4,10 @@
   "private": true,
   "main": "boot.js",
   "scripts": {
+    "format:go": "gofmt -w ./",
+    "format:wanproxy": "pnpm -C ./wanproxy.js format",
+    "format:srv": "pnpm -C ./srv.js format",
+    "format": "run-p format:*",
     "git:config": "git config user.name hangtiancheng && git config user.email '161043261@qq.com'",
     "git:commit": "git add -A && git commit -m \"feat: Introduce new features\"",
     "git:commit:skip": "git add -A && git commit -m \"feat: Introduce new features [skip ci]\"",
@@ -18,5 +22,8 @@
   "author": "https://github.com/hangtiancheng",
   "license": "ISC",
   "packageManager": "pnpm@12.10.1",
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "npm-run-all2": "^9.0.4"
+  }
 }

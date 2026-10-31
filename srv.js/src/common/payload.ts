@@ -25,9 +25,7 @@ export function parsePattern(value: string): Pattern {
   if ((PATTERNS as readonly string[]).includes(value)) {
     return value as Pattern;
   }
-  throw new Error(
-    `unknown pattern "${value}" (want random|repeat|mixed|text)`,
-  );
+  throw new Error(`unknown pattern "${value}" (want random|repeat|mixed|text)`);
 }
 
 // The text pattern mimics an application log stream: long runs of identical,
@@ -188,17 +186,10 @@ export class PayloadReader {
     this.textPos = 0;
     const slot = seq % 40;
     if (slot >= 30) {
-      const tok = [
-        this.g.next(),
-        this.g.next(),
-        this.g.next(),
-        this.g.next(),
-      ];
+      const tok = [this.g.next(), this.g.next(), this.g.next(), this.g.next()];
       const latency = this.g.next() * 4 + this.g.next();
       const handler = TEXT_HANDLERS[slot % TEXT_HANDLERS.length]!;
-      const trace = tok
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
+      const trace = tok.map((b) => b.toString(16).padStart(2, '0')).join('');
       const c1 = this.g.next();
       const c2 = this.g.next();
       const c3 = this.g.next();

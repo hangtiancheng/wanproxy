@@ -13,12 +13,42 @@ import {
 // (srv/cmd/wanbench gen | sha256sum).  The TypeScript port must match
 // byte-for-byte so the SRV, bench source and file generation agree.
 const VECTORS = [
-  ['mixed', 1048576, 42, '2b6402950610b17db847a7524417bbc73b157caad5b0ee294f9fb8fe92078de2'],
-  ['mixed', 16777216, 7, '4ead5522f25caf738794c95b841b27d373f476d892f00b6dee13fc4e1a743a1e'],
-  ['random', 65536, 42, '09a583233550509615882d5b31270150c7d35d7b93287616f862833dce8bba0f'],
-  ['repeat', 1048576, 42, '63daee8d1eba26cf1e7e375891878e49840180410687348be6a353a73352e171'],
-  ['text', 1048576, 42, '426be7c2cd80cd09294a792ed30e7f6d7950a3f37917c9274af2b026b4638df2'],
-  ['text', 4194304, 42, 'c4f9b03ab79008a726da223036c6008acf537aca5889e30c54c07f7cf93643f5'],
+  [
+    'mixed',
+    1048576,
+    42,
+    '2b6402950610b17db847a7524417bbc73b157caad5b0ee294f9fb8fe92078de2',
+  ],
+  [
+    'mixed',
+    16777216,
+    7,
+    '4ead5522f25caf738794c95b841b27d373f476d892f00b6dee13fc4e1a743a1e',
+  ],
+  [
+    'random',
+    65536,
+    42,
+    '09a583233550509615882d5b31270150c7d35d7b93287616f862833dce8bba0f',
+  ],
+  [
+    'repeat',
+    1048576,
+    42,
+    '63daee8d1eba26cf1e7e375891878e49840180410687348be6a353a73352e171',
+  ],
+  [
+    'text',
+    1048576,
+    42,
+    '426be7c2cd80cd09294a792ed30e7f6d7950a3f37917c9274af2b026b4638df2',
+  ],
+  [
+    'text',
+    4194304,
+    42,
+    'c4f9b03ab79008a726da223036c6008acf537aca5889e30c54c07f7cf93643f5',
+  ],
 ] as const;
 
 describe('payload generator', () => {

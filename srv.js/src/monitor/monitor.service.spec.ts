@@ -79,7 +79,12 @@ describe('normalizeFleet', () => {
         {
           acceptedConnections: 1,
           activeSockets: 0,
-          codec: { mode: 'xcodec', role: 'incoming', stats, trackStatistics: true },
+          codec: {
+            mode: 'xcodec',
+            role: 'incoming',
+            stats,
+            trackStatistics: true,
+          },
           kind: 'tcp',
           listening: true,
           name: 'proxy-xcodec',

@@ -14,9 +14,12 @@ import type {
 import { MonitorServer } from "../monitor/monitor-server.js";
 import type { BoundAddress, FleetStatus, ProxyStatus } from "./proxy-status.js";
 import { SocksProxyServer } from "./socks-proxy.js";
+import { SshSshProxyServer } from "./ssh-ssh-proxy.js";
 import { TcpProxyServer, type TcpProxyRuntime } from "./tcp-proxy.js";
+import type { RelayCodecSpec } from "./tcp-relay.js";
+import type { CodecSpec } from "../config/model.js";
 
-type FleetServer = TcpProxyServer | SocksProxyServer;
+type FleetServer = TcpProxyServer | SshSshProxyServer | SocksProxyServer;
 
 export class RuntimeFleet {
   private readonly config: RuntimeConfig;
@@ -85,25 +88,42 @@ export class RuntimeFleet {
 }
 
 /**
- * buildTcpProxy adapts one runtime proxy onto the TCP proxy server.  The
- * common WAN-chain topology configures at most one codec per proxy: a peer
- * codec maps onto the "incoming" role and an interface codec onto the
- * "outgoing" role, exactly like the JSON adapter.  SSH-SSH proxies and
- * combined interface+peer codecs parse and validate but are not yet
- * runnable here (see the README residual gaps).
+ * buildTcpProxy adapts one runtime proxy onto a proxy server.  SSH-SSH
+ * proxies run over the SshSshProxyServer; TCP-TCP proxies run over the
+ * TcpProxyServer, which supports both the common single-codec topology (a
+ * peer codec maps onto the "incoming" role and an interface codec onto the
+ * "outgoing" role) and combined interface+peer codecs, mirroring the Go
+ * proxy.Fleet.
  */
-function buildTcpProxy(proxy: RuntimeProxyConfig): TcpProxyServer {
+function buildTcpProxy(
+  proxy: RuntimeProxyConfig,
+): TcpProxyServer | SshSshProxyServer {
+  const peerSpec = toRelaySpec(proxy.peerCodec);
+  const listen = {
+    host: proxy.interface.host,
+    port: Number(proxy.interface.port),
+  };
+  const upstream = { host: proxy.peer.host, port: Number(proxy.peer.port) };
+
   if (proxy.ssh !== undefined) {
-    throw new Error(
-      `proxy "${proxy.name}": SSH-SSH proxies are not yet runnable by the TypeScript fleet`,
-    );
-  }
-  if (proxy.interfaceCodec !== undefined && proxy.peerCodec !== undefined) {
-    throw new Error(
-      `proxy "${proxy.name}": combined interface and peer codecs are not yet runnable by the TypeScript fleet`,
+    return new SshSshProxyServer(
+      { hostKey: proxy.ssh.hostKey, listen, name: proxy.name, upstream },
+      dualRuntime(proxy),
     );
   }
 
+  // Dual-codec TCP proxy: pass both specs through the runtime.
+  if (proxy.interfaceCodec !== undefined && proxy.peerCodec !== undefined) {
+    const config: TcpProxyConfig = {
+      codec: { mode: peerSpec?.mode ?? "none", role: "incoming" },
+      listen,
+      name: proxy.name,
+      upstream,
+    };
+    return new TcpProxyServer(config, dualRuntime(proxy));
+  }
+
+  // Single-codec (or pass-through) TCP proxy.
   const spec = proxy.interfaceCodec ?? proxy.peerCodec;
   const role: "incoming" | "outgoing" =
     proxy.interfaceCodec !== undefined ? "outgoing" : "incoming";
@@ -112,16 +132,40 @@ function buildTcpProxy(proxy: RuntimeProxyConfig): TcpProxyServer {
     spec !== undefined && spec.compressorLevel >= 0
       ? { compressorLevel: spec.compressorLevel, mode, role }
       : { mode, role };
-
-  const config: TcpProxyConfig = {
-    codec,
-    listen: { host: proxy.interface.host, port: Number(proxy.interface.port) },
-    name: proxy.name,
-    upstream: { host: proxy.peer.host, port: Number(proxy.peer.port) },
-  };
+  const config: TcpProxyConfig = { codec, listen, name: proxy.name, upstream };
   const runtime: TcpProxyRuntime = {
     ...(spec?.cache === undefined ? {} : { cache: spec.cache }),
     ...(spec?.stats === undefined ? {} : { stats: spec.stats }),
   };
   return new TcpProxyServer(config, runtime);
+}
+
+/** dualRuntime builds the interface/peer relay specs and counters. */
+function dualRuntime(proxy: RuntimeProxyConfig): TcpProxyRuntime {
+  const ifaceSpec = toRelaySpec(proxy.interfaceCodec);
+  const peerSpec = toRelaySpec(proxy.peerCodec);
+  return {
+    ...(ifaceSpec === undefined ? {} : { iface: ifaceSpec }),
+    ...(peerSpec === undefined ? {} : { peer: peerSpec }),
+    ...(proxy.interfaceCodec?.stats === undefined
+      ? {}
+      : { ifaceStats: proxy.interfaceCodec.stats }),
+    ...(proxy.peerCodec?.stats === undefined
+      ? {}
+      : { peerStats: proxy.peerCodec.stats }),
+  };
+}
+
+/** toRelaySpec maps a config CodecSpec onto the relay's codec spec. */
+function toRelaySpec(spec: CodecSpec | undefined): RelayCodecSpec | undefined {
+  if (spec === undefined) {
+    return undefined;
+  }
+  return {
+    ...(spec.cache === undefined ? {} : { cache: spec.cache }),
+    ...(spec.compressorLevel >= 0
+      ? { compressorLevel: spec.compressorLevel }
+      : {}),
+    mode: spec.mode,
+  };
 }

@@ -7,6 +7,7 @@
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { generateKeyPairSync } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 import {
@@ -16,12 +17,21 @@ import {
   type OnApplicationShutdown,
 } from '@nestjs/common';
 
-import { ensureDirs, getPaths, monitorPort, srvPort } from '../common/paths.js';
+import {
+  ensureDirs,
+  getPaths,
+  monitorPort,
+  srvPort,
+  sshEchoPort,
+} from '../common/paths.js';
 
 @Injectable()
-export class DaemonService implements OnApplicationBootstrap, OnApplicationShutdown {
+export class DaemonService
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
   private readonly logger = new Logger('daemon');
   private child: ChildProcess | undefined;
+  private echoChild: ChildProcess | undefined;
   private stopped = false;
   private restartLock: Promise<void> = Promise.resolve();
 
@@ -47,8 +57,10 @@ export class DaemonService implements OnApplicationBootstrap, OnApplicationShutd
   public async start(): Promise<void> {
     ensureDirs();
     this.ensureBuilt();
+    this.ensureHostKey();
     this.renderConfig();
     this.stopped = false;
+    this.spawnSshEcho();
     this.spawnWanproxy();
     await this.waitForHttp(monitorPort(), 15000);
     this.logger.log(`wanproxy.js daemon up (monitor on :${monitorPort()})`);
@@ -63,11 +75,14 @@ export class DaemonService implements OnApplicationBootstrap, OnApplicationShutd
     const run = this.restartLock.then(async () => {
       await this.stop();
       this.child = undefined;
+      this.echoChild = undefined;
       if (clearCache) {
         rmSync(getPaths().xcachePath, { force: true });
         this.logger.log(`cleared XCDFS volume ${getPaths().xcachePath}`);
       }
-      this.logger.log(`restarting wanproxy.js fleet (clearCache=${clearCache})`);
+      this.logger.log(
+        `restarting wanproxy.js fleet (clearCache=${clearCache})`,
+      );
       await this.start();
     });
     this.restartLock = run.catch(() => undefined);
@@ -80,11 +95,28 @@ export class DaemonService implements OnApplicationBootstrap, OnApplicationShutd
       return;
     }
     this.stopped = true;
-    const child = this.child;
-    if (child === undefined || child.pid === undefined || child.exitCode !== null) {
+    await this.killChild(this.child, 'wanproxy.js daemon');
+    await this.killChild(this.echoChild, 'ssh-echo');
+  }
+
+  /** isRunning reports whether the child process is alive. */
+  public isRunning(): boolean {
+    return this.child !== undefined && this.child.exitCode === null;
+  }
+
+  /** killChild sends SIGTERM (then SIGKILL) to a managed child process. */
+  private async killChild(
+    child: ChildProcess | undefined,
+    label: string,
+  ): Promise<void> {
+    if (
+      child === undefined ||
+      child.pid === undefined ||
+      child.exitCode !== null
+    ) {
       return;
     }
-    this.logger.log(`stopping wanproxy.js daemon (pid ${child.pid})`);
+    this.logger.log(`stopping ${label} (pid ${child.pid})`);
     const exited = new Promise<void>((resolve) => {
       child.once('exit', () => resolve());
     });
@@ -94,16 +126,27 @@ export class DaemonService implements OnApplicationBootstrap, OnApplicationShutd
       new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 3000)),
     ]);
     if (timedOut) {
-      this.logger.warn('wanproxy.js did not exit in 3s; sending SIGKILL');
+      this.logger.warn(`${label} did not exit in 3s; sending SIGKILL`);
       child.kill('SIGKILL');
       await exited;
     }
-    this.logger.log('wanproxy.js daemon stopped');
+    this.logger.log(`${label} stopped`);
   }
 
-  /** isRunning reports whether the child process is alive. */
-  public isRunning(): boolean {
-    return this.child !== undefined && this.child.exitCode === null;
+  /**
+   * ensureHostKey reuses data/ssh-hostkey.pem when present, otherwise
+   * generates a fresh 2048-bit RSA key (PKCS#1 PEM), mirroring the Go
+   * daemon's ensureHostKey.
+   */
+  private ensureHostKey(): void {
+    const p = getPaths();
+    if (existsSync(p.hostKeyPath)) {
+      return;
+    }
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const pem = privateKey.export({ format: 'pem', type: 'pkcs1' }).toString();
+    writeFileSync(p.hostKeyPath, pem, { mode: 0o600 });
+    this.logger.log(`generated demo SSH host key at ${p.hostKeyPath}`);
   }
 
   private ensureBuilt(): void {
@@ -134,9 +177,35 @@ export class DaemonService implements OnApplicationBootstrap, OnApplicationShutd
     const rendered = readFileSync(p.templatePath, 'utf8')
       .replaceAll('{{SRV_PORT}}', String(srvPort()))
       .replaceAll('{{MONITOR_PORT}}', String(monitorPort()))
-      .replaceAll('{{XCACHE_PATH}}', p.xcachePath);
+      .replaceAll('{{XCACHE_PATH}}', p.xcachePath)
+      .replaceAll('{{SSH_ECHO_PORT}}', String(sshEchoPort()))
+      .replaceAll('{{HOSTKEY_PATH}}', p.hostKeyPath);
     writeFileSync(p.configPath, rendered);
     this.logger.log(`rendered daemon config at ${p.configPath}`);
+  }
+
+  private spawnSshEcho(): void {
+    const p = getPaths();
+    const child = spawn(
+      process.execPath,
+      [
+        p.sshEchoCli,
+        `--listen=127.0.0.1:${sshEchoPort()}`,
+        `--hostkey=${p.hostKeyPath}`,
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    this.echoChild = child;
+    this.pipeLines(child.stdout, 'ssh-echo');
+    this.pipeLines(child.stderr, 'ssh-echo');
+    child.on('exit', (code, signal) => {
+      if (!this.stopped) {
+        this.logger.warn(`ssh-echo exited (code=${code} signal=${signal})`);
+      }
+    });
+    child.on('error', (error) => {
+      this.logger.error(`ssh-echo spawn error: ${String(error)}`);
+    });
   }
 
   private spawnWanproxy(): void {
@@ -157,10 +226,7 @@ export class DaemonService implements OnApplicationBootstrap, OnApplicationShutd
     });
   }
 
-  private pipeLines(
-    stream: NodeJS.ReadableStream | null,
-    label: string,
-  ): void {
+  private pipeLines(stream: NodeJS.ReadableStream | null, label: string): void {
     if (stream === null) {
       return;
     }

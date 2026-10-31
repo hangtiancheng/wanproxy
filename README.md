@@ -39,7 +39,7 @@ target. All orchestration lives in `boot.js` — the Makefile only forwards to
 
 On first boot the SRV renders its `demo/wanproxy.conf.template`, builds the
 proxy if needed, and spawns the proxy fleet with an HTTP monitor on `:9901`
-(the Go stack also starts an SSH echo server on `:8349`).
+(both stacks also start an SSH echo server on `:8349`).
 
 ### What the demo shows
 
@@ -62,12 +62,13 @@ proxy if needed, and spawns the proxy fleet with an HTTP monitor on `:9901`
 - **Inspector** — frame-level analysis of captured XCDFS streams using
   the ported `tack` and `xcdump` tools.
 
-Stack coverage: the SSH transport chain and the SSH echo server are
-provided by the **Go** stack. The **JS** stack covers the direct /
-passthrough / zlib / xcodec / WAN / SOCKS scenarios end to end — timing,
-throughput, SHA-256 integrity, and the per-codec wire-byte counters
-(`track_statistics`), so A/B experiments report real wire savings on both
-stacks; see [`srv.js/README.md`](srv.js/README.md) for its current gaps.
+Stack coverage: both stacks now cover every demo scenario end to end —
+direct / passthrough / zlib / xcodec / WAN / SOCKS / SSH chain — with
+timing, throughput, SHA-256 integrity, and the per-codec wire-byte counters
+(`track_statistics`), so A/B experiments report real wire savings on either
+stack. The JS stack runs the SSH chain over the wanproxy.js SSH-SSH proxy
+(codec spliced through the encrypted link) and its `ssh-echo` endpoint; see
+[`srv.js/README.md`](srv.js/README.md) for the remaining protocol gaps.
 
 ### Demo port map
 
@@ -79,8 +80,8 @@ stacks; see [`srv.js/README.md`](srv.js/README.md) for its current gaps.
 | 8310 / 8311 / 8312 | passthrough / zlib / xcodec single-hop proxies |
 | 8320 → 8321        | WAN chain (wan-a → wan-b, xcodec dedup)        |
 | 8330               | SOCKS proxy                                    |
-| 8340 → 8341        | SSH transport chain (ssh-a → ssh-b, Go stack)  |
-| 8349               | SSH echo server (wanbench, Go stack)           |
+| 8340 → 8341        | SSH transport chain (ssh-a → ssh-b)            |
+| 8349               | SSH echo server (wanbench / ssh-echo)          |
 
 ## Port details
 

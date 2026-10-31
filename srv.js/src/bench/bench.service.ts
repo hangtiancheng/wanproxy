@@ -176,14 +176,23 @@ export class BenchService {
       throw new AlreadyRunningError();
     }
     try {
-      return await this.runOnce(scenario, direction, patternStr, pattern, size, seed);
+      return await this.runOnce(
+        scenario,
+        direction,
+        patternStr,
+        pattern,
+        size,
+        seed,
+      );
     } finally {
       this.end();
     }
   }
 
   /** runExperiment executes a full A/B experiment. */
-  public async runExperiment(req: ExperimentRequest): Promise<ExperimentReport> {
+  public async runExperiment(
+    req: ExperimentRequest,
+  ): Promise<ExperimentReport> {
     if (!req.arms || req.arms.length === 0) {
       throw new Error('experiment requires at least one arm');
     }
@@ -193,14 +202,18 @@ export class BenchService {
     const direction = req.direction || 'download';
     if (!['upload', 'download', 'roundtrip'].includes(direction)) {
       throw new Error(
-        'unknown direction "' + direction + '" (want upload|download|roundtrip)',
+        'unknown direction "' +
+          direction +
+          '" (want upload|download|roundtrip)',
       );
     }
     const patternStr = req.pattern || 'mixed';
     const pattern = parsePattern(patternStr);
     const size = req.size ?? DEFAULT_SIZE;
     if (size < 1 || size > MAX_EXPERIMENT_SIZE) {
-      throw new Error('size ' + size + ' out of range 1..' + MAX_EXPERIMENT_SIZE);
+      throw new Error(
+        'size ' + size + ' out of range 1..' + MAX_EXPERIMENT_SIZE,
+      );
     }
     const seed = req.seed ?? 42;
     if (seed < 0 || seed > MAX_EXPERIMENT_SEED) {
@@ -208,7 +221,9 @@ export class BenchService {
     }
     const iterations = req.iterations ?? DEFAULT_ITERATIONS;
     if (iterations < 1 || iterations > MAX_ITERATIONS) {
-      throw new Error('iterations ' + iterations + ' out of range 1..' + MAX_ITERATIONS);
+      throw new Error(
+        'iterations ' + iterations + ' out of range 1..' + MAX_ITERATIONS,
+      );
     }
     const isolateArms = req.isolateArms ?? true;
 
@@ -371,10 +386,14 @@ export class BenchService {
 
     if (before !== undefined && after !== undefined) {
       const raw: CodecStats = {
-        codecToIncomingBytes: after.codecToIncomingBytes - before.codecToIncomingBytes,
-        codecToOutgoingBytes: after.codecToOutgoingBytes - before.codecToOutgoingBytes,
-        incomingToCodecBytes: after.incomingToCodecBytes - before.incomingToCodecBytes,
-        outgoingToCodecBytes: after.outgoingToCodecBytes - before.outgoingToCodecBytes,
+        codecToIncomingBytes:
+          after.codecToIncomingBytes - before.codecToIncomingBytes,
+        codecToOutgoingBytes:
+          after.codecToOutgoingBytes - before.codecToOutgoingBytes,
+        incomingToCodecBytes:
+          after.incomingToCodecBytes - before.incomingToCodecBytes,
+        outgoingToCodecBytes:
+          after.outgoingToCodecBytes - before.outgoingToCodecBytes,
       };
       // Codecs without `track_statistics` (or a monitor that could not be
       // sampled) read as an all-zero delta.  Treat that as "not tracked"
@@ -386,30 +405,32 @@ export class BenchService {
         raw.outgoingToCodecBytes !== 0 ||
         raw.codecToIncomingBytes !== 0;
       if (tracked) {
-      let appBytes = 0;
-      let wireBytes = 0;
-      if (direction === 'upload' || direction === 'roundtrip') {
-        appBytes += raw.incomingToCodecBytes;
-        wireBytes += raw.codecToOutgoingBytes;
-      }
-      if (direction === 'download' || direction === 'roundtrip') {
-        appBytes += raw.codecToIncomingBytes;
-        wireBytes += raw.outgoingToCodecBytes;
-      }
-      result.stats = {
-        appBytes,
-        codec: scenario.statsCodec!,
-        proxy: scenario.statsProxy!,
-        ratio: appBytes > 0 ? wireBytes / appBytes : null,
-        raw,
-        wireBytes,
-      };
+        let appBytes = 0;
+        let wireBytes = 0;
+        if (direction === 'upload' || direction === 'roundtrip') {
+          appBytes += raw.incomingToCodecBytes;
+          wireBytes += raw.codecToOutgoingBytes;
+        }
+        if (direction === 'download' || direction === 'roundtrip') {
+          appBytes += raw.codecToIncomingBytes;
+          wireBytes += raw.outgoingToCodecBytes;
+        }
+        result.stats = {
+          appBytes,
+          codec: scenario.statsCodec!,
+          proxy: scenario.statsProxy!,
+          ratio: appBytes > 0 ? wireBytes / appBytes : null,
+          raw,
+          wireBytes,
+        };
       }
     }
     return result;
   }
 
-  private async sampleStats(scenario: Scenario): Promise<CodecStats | undefined> {
+  private async sampleStats(
+    scenario: Scenario,
+  ): Promise<CodecStats | undefined> {
     try {
       const fs = await this.monitor.status();
       return codecStats(fs, scenario.statsProxy!, scenario.statsCodec!);
@@ -464,7 +485,10 @@ function aggregateArm(iters: IterationResult[]): ArmTotal {
   return total;
 }
 
-function compareArms(arms: ArmReport[], baselineId: string): ComparisonVerdict[] {
+function compareArms(
+  arms: ArmReport[],
+  baselineId: string,
+): ComparisonVerdict[] {
   const baseline = arms.find((a) => a.scenario.id === baselineId);
   if (baseline === undefined) {
     return [];
@@ -487,7 +511,10 @@ function compareArms(arms: ArmReport[], baselineId: string): ComparisonVerdict[]
         (100 * (baseline.total.wireBytes - arm.total.wireBytes)) /
         baseline.total.wireBytes;
     }
-    if (arm.total.meanThroughputMBps > 0 && baseline.total.meanThroughputMBps > 0) {
+    if (
+      arm.total.meanThroughputMBps > 0 &&
+      baseline.total.meanThroughputMBps > 0
+    ) {
       v.throughputSpeedup =
         arm.total.meanThroughputMBps / baseline.total.meanThroughputMBps;
     }

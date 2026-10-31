@@ -15,7 +15,11 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
-import { createPayloadStream, parsePattern, type Pattern } from '../common/payload.js';
+import {
+  createPayloadStream,
+  parsePattern,
+  type Pattern,
+} from '../common/payload.js';
 import { scenarios } from '../monitor/scenarios.js';
 import {
   AlreadyRunningError,
@@ -86,7 +90,8 @@ export class BenchController {
       res.status(400).json({ message: (error as Error).message });
       return;
     }
-    const parsedSeed = seedStr !== undefined ? Number.parseInt(seedStr, 10) : 42;
+    const parsedSeed =
+      seedStr !== undefined ? Number.parseInt(seedStr, 10) : 42;
     const seed = Number.isFinite(parsedSeed) ? parsedSeed : 42;
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Length', String(size));

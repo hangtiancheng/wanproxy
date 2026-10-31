@@ -83,7 +83,9 @@ interface RawProxy {
   };
 }
 
-function normalizeEndpoint(ep?: RawEndpoint): { host?: string; port?: string } | undefined {
+function normalizeEndpoint(
+  ep?: RawEndpoint,
+): { host?: string; port?: string } | undefined {
   if (ep === undefined) {
     return undefined;
   }
@@ -172,10 +174,9 @@ export class MonitorService {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 3000);
     try {
-      const res = await fetch(
-        `http://127.0.0.1:${monitorPort()}/status`,
-        { signal: controller.signal },
-      );
+      const res = await fetch(`http://127.0.0.1:${monitorPort()}/status`, {
+        signal: controller.signal,
+      });
       const text = await res.text();
       if (res.status < 200 || res.status >= 300) {
         throw new Error(`monitor status ${res.status}`);

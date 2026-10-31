@@ -60,6 +60,7 @@ describe('srv.js HTTP API (e2e)', () => {
       'xcodec-chain',
       'wan-chain',
       'socks',
+      'ssh-chain',
     ]);
   });
 
@@ -92,9 +93,7 @@ describe('srv.js HTTP API (e2e)', () => {
       .get('/api/files/' + meta.id + '/content')
       .set('Range', 'bytes=0-99')
       .expect(206);
-    expect(partial.headers['content-range']).toBe(
-      'bytes 0-99/' + size,
-    );
+    expect(partial.headers['content-range']).toBe('bytes 0-99/' + size);
     expect(partial.headers['content-length']).toBe('100');
 
     const badRange = await request(server)
@@ -118,8 +117,12 @@ describe('srv.js HTTP API (e2e)', () => {
       expect(result.frames.extract).toBeGreaterThan(0);
     }
 
-    await request(server).delete('/api/files/' + meta.id).expect(204);
-    await request(server).get('/api/files/' + meta.id + '/content').expect(404);
+    await request(server)
+      .delete('/api/files/' + meta.id)
+      .expect(204);
+    await request(server)
+      .get('/api/files/' + meta.id + '/content')
+      .expect(404);
   });
 
   it('streams a deterministic payload from /api/bench/source', async () => {

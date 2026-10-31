@@ -1,5 +1,4 @@
-import type { Socket } from "node:net";
-import type { Transform } from "node:stream";
+import type { Duplex, Transform } from "node:stream";
 
 export interface RelayCloseController {
   readonly closed: Promise<void>;
@@ -7,8 +6,8 @@ export interface RelayCloseController {
 }
 
 export function createRelayCloseController(
-  local: Socket,
-  upstream: Socket,
+  local: Duplex,
+  upstream: Duplex,
   transforms: readonly Transform[],
   destroy: () => void,
 ): RelayCloseController {

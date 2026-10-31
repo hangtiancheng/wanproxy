@@ -1,14 +1,18 @@
 /**
  * The benchmark transfer engine.  It speaks plain HTTP (directly or through
  * any TCP proxy) and SOCKS5 CONNECT.  It is the TypeScript port of
- * srv/internal/bench/bench.go, minus the SSH transport (the wanproxy.js
- * runtime does not yet run SSH-SSH proxies).
+ * srv/internal/bench/bench.go, including the SSH transport that drives the
+ * wanproxy.js SSH-SSH proxy chain (the SSH client is imported from the
+ * wanproxy.js runtime, mirroring how the Go bench imports wanproxy.go/ssh).
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, type Hash } from 'node:crypto';
+import { once } from 'node:events';
 import http from 'node:http';
 import net from 'node:net';
 import type { Readable } from 'node:stream';
+
+import { SshStream, SshTransport } from 'wanproxy-js/dist/ssh/index.js';
 
 import {
   createPayloadStream,
@@ -50,7 +54,7 @@ export async function runBench(
     } else if (kind === 'socks') {
       sha = await benchSocks(proxy, target, direction, pattern, size, seed);
     } else if (kind === 'ssh') {
-      throw new Error('ssh scenario is not supported by the wanproxy.js runtime yet');
+      sha = await benchSsh(proxy, pattern, size, seed);
     } else {
       throw new Error('unknown scenario "' + kind + '"');
     }
@@ -175,15 +179,34 @@ async function benchSocks(
   size: number,
   seed: number,
 ): Promise<string> {
-  if (proxyAddr === undefined || proxyAddr === '' || target === undefined || target === '') {
+  if (
+    proxyAddr === undefined ||
+    proxyAddr === '' ||
+    target === undefined ||
+    target === ''
+  ) {
     throw new Error('socks scenario requires a proxy and target');
   }
   let last = '';
   if (direction === 'upload' || direction === 'roundtrip') {
-    last = await socksTransfer(proxyAddr, target, 'upload', pattern, size, seed);
+    last = await socksTransfer(
+      proxyAddr,
+      target,
+      'upload',
+      pattern,
+      size,
+      seed,
+    );
   }
   if (direction === 'download' || direction === 'roundtrip') {
-    last = await socksTransfer(proxyAddr, target, 'download', pattern, size, seed);
+    last = await socksTransfer(
+      proxyAddr,
+      target,
+      'download',
+      pattern,
+      size,
+      seed,
+    );
   }
   return last;
 }
@@ -212,7 +235,9 @@ async function socksTransfer(
       );
       const text = await readAll(res);
       if (res.statusCode !== 200) {
-        throw new Error('sink status ' + res.statusCode + ': ' + text.slice(0, 200));
+        throw new Error(
+          'sink status ' + res.statusCode + ': ' + text.slice(0, 200),
+        );
       }
       const sink = JSON.parse(text) as { bytes: number; sha256: string };
       if (sink.bytes !== size) {
@@ -221,7 +246,12 @@ async function socksTransfer(
       return sink.sha256;
     }
     const path =
-      '/api/bench/source?size=' + size + '&seed=' + seed + '&pattern=' + pattern;
+      '/api/bench/source?size=' +
+      size +
+      '&seed=' +
+      seed +
+      '&pattern=' +
+      pattern;
     const res = await httpOverSocket(sock, host, port, 'GET', path, {});
     if (res.statusCode !== 200) {
       throw new Error('source status ' + res.statusCode);
@@ -328,7 +358,10 @@ function tcpConnect(host: string, port: number): Promise<net.Socket> {
  * socksConnect performs a no-auth SOCKS5 handshake and CONNECT, matching the
  * wanproxy SOCKS proxy (which answers before dialing, C++ style).
  */
-async function socksConnect(proxyAddr: string, target: string): Promise<net.Socket> {
+async function socksConnect(
+  proxyAddr: string,
+  target: string,
+): Promise<net.Socket> {
   const [proxyHost, proxyPortStr] = splitHostPort(proxyAddr);
   const raw = await tcpConnect(proxyHost, Number.parseInt(proxyPortStr, 10));
   const sock = new AsyncSock(raw);
@@ -425,4 +458,133 @@ function readAll(res: http.IncomingMessage): Promise<string> {
     res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     res.on('error', reject);
   });
+}
+
+// ---------------------------------------------------------------------
+// SSH transport (through the wanproxy.js SSH-SSH proxy chain to an echo)
+// ---------------------------------------------------------------------
+
+/**
+ * benchSsh transfers the payload through an SSH-SSH proxy chain to an SSH
+ * echo endpoint, using the wanproxy.js SSH transport with the C++ untagged
+ * [u32 len][data] framing.  It mirrors the Go benchSSH: the payload is
+ * streamed out in frames while the echo is read back concurrently, and only
+ * the payload bytes (not the length prefixes) are hashed.  Direction is
+ * ignored — the echo makes every transfer a round trip.
+ */
+async function benchSsh(
+  proxy: string | undefined,
+  pattern: Pattern,
+  size: number,
+  seed: number,
+): Promise<string> {
+  if (proxy === undefined || proxy === '') {
+    throw new Error('ssh scenario requires a proxy');
+  }
+  const [host, portStr] = splitHostPort(proxy);
+  const port = Number.parseInt(portStr, 10);
+  const socket = net.connect({ allowHalfOpen: true, host, port });
+  await once(socket, 'connect');
+  const transport = new SshTransport(socket, { role: 'client' });
+  await transport.start();
+  const stream = new SshStream(transport);
+
+  const hash = createHash('sha256');
+  try {
+    // Read the echo concurrently with writing the payload.
+    const echoDone = readSshEcho(stream, size, hash);
+    await writeSshPayload(stream, pattern, size, seed);
+    await echoDone;
+  } finally {
+    stream.destroy();
+    socket.destroy();
+  }
+  return hash.digest('hex');
+}
+
+/**
+ * readSshEcho parses the untagged [u32 len][data] framing from the echo
+ * stream and hashes the payload bytes until `size` bytes have been seen.
+ */
+function readSshEcho(
+  stream: SshStream,
+  size: number,
+  hash: Hash,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let buffer = Buffer.alloc(0);
+    let hashed = 0;
+    let settled = false;
+    const finish = (error?: Error): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (error === undefined) {
+        resolve();
+      } else {
+        reject(error);
+      }
+    };
+    stream.on('data', (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      for (;;) {
+        if (buffer.length < 4) {
+          return;
+        }
+        const frameLen = buffer.readUInt32BE(0);
+        if (frameLen <= 0 || frameLen > size - hashed) {
+          finish(
+            new Error(
+              'bad echo frame length ' +
+                frameLen +
+                ' (remaining ' +
+                (size - hashed) +
+                ')',
+            ),
+          );
+          return;
+        }
+        if (buffer.length < 4 + frameLen) {
+          return;
+        }
+        hash.update(buffer.subarray(4, 4 + frameLen));
+        hashed += frameLen;
+        buffer = buffer.subarray(4 + frameLen);
+        if (hashed >= size) {
+          finish();
+          return;
+        }
+      }
+    });
+    stream.on('error', (error: Error) => finish(error));
+    stream.on('end', () => {
+      if (hashed < size) {
+        finish(new Error('ssh echo ended early at ' + hashed + '/' + size));
+      } else {
+        finish();
+      }
+    });
+  });
+}
+
+/**
+ * writeSshPayload streams the generated payload to the SSH transport in
+ * [u32 len][data] frames, honoring back-pressure.
+ */
+async function writeSshPayload(
+  stream: SshStream,
+  pattern: Pattern,
+  size: number,
+  seed: number,
+): Promise<void> {
+  const source: Readable = createPayloadStream(pattern, size, seed);
+  const header = Buffer.alloc(4);
+  for await (const chunk of source) {
+    const data = chunk as Buffer;
+    header.writeUInt32BE(data.length, 0);
+    if (!stream.write(Buffer.concat([header, data]))) {
+      await once(stream, 'drain');
+    }
+  }
 }

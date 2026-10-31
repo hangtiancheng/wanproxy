@@ -90,7 +90,9 @@ export class FilesService {
 
   /** contentType maps a display name's extension to a MIME type. */
   public contentType(name: string): string {
-    return CONTENT_TYPES[extname(name).toLowerCase()] ?? 'application/octet-stream';
+    return (
+      CONTENT_TYPES[extname(name).toLowerCase()] ?? 'application/octet-stream'
+    );
   }
 
   /** store streams an upload body to disk, returning the stored metadata. */
@@ -105,7 +107,12 @@ export class FilesService {
     pattern: Pattern,
     seed: number,
   ): Promise<FileMeta> {
-    return this.write(name, createPayloadStream(pattern, size, seed), pattern, seed);
+    return this.write(
+      name,
+      createPayloadStream(pattern, size, seed),
+      pattern,
+      seed,
+    );
   }
 
   private async write(
@@ -172,10 +179,7 @@ export class FilesService {
 
   private saveMetas(): void {
     try {
-      writeFileSync(
-        getPaths().metaPath,
-        JSON.stringify(this.metas, null, 2),
-      );
+      writeFileSync(getPaths().metaPath, JSON.stringify(this.metas, null, 2));
     } catch (error) {
       this.logger.error(`write metas: ${String(error)}`);
     }

@@ -170,7 +170,7 @@ activate proxy0
 
 - `src/common`: leveled logging with C++-style component paths (`src/common/log.ts`).
 - `src/config`: configuration — the classic `wanproxy.conf` directive parser, the JSON schemas, the unified runtime model, size parsing, and the format-detecting loader.
-- `src/proxy`: TCP listener, upstream connector, bidirectional relay, the JSON `ProxyFleet`, and the `RuntimeFleet` that runs the unified model.
+- `src/proxy`: TCP listener, upstream connector, bidirectional relay (`relayStreams`, supporting single or dual codecs over any duplex stream), the SSH-SSH proxy server (`ssh-ssh-proxy.ts`), the JSON `ProxyFleet`, and the `RuntimeFleet` that runs the unified model.
 - `src/monitor`: monitor HTTP interface — HTML at `/`, per-object views at `/object/<name>`, text under `/:text`, and JSON at `/status`. TCP proxies report their codec slot with the Go-compatible statistics fields (`trackStatistics`, `stats` with the four boundary counters) when the codec was activated with `track_statistics`.
 - `src/pipeline`: explicit stream pipeline builder for pass-through, zlib, XCodec session, and combined modes, plus the four codec byte counters (`codec-stats.ts`).
 - `src/pipe-protocol`: HELLO, FRAME, ASK, LEARN, ADVANCE, EOS, and EOS_ACK session protocol.
@@ -182,7 +182,7 @@ activate proxy0
 - `src/cli`: command-line entry points — `wanproxy` (configured TCP proxies), `tack`, `xcdump`, and `fwdproxy`.
 - `src/proxy` also provides `SshTunnelClient`/`SshTunnelServer`, which relay a local byte stream to a target over an encrypted SSH transport.
 
-The TCP relay uses manual bidirectional `pipe()` chains instead of `stream/promises.pipeline()` because duplex sockets must preserve half-close behavior while the opposite direction flushes pending data.
+The relay uses manual bidirectional `pipe()` chains instead of `stream/promises.pipeline()` because duplex streams must preserve half-close behavior while the opposite direction flushes pending data. It composes the interface and peer codec stages per direction (`[interface decode] → [peer encode]` toward the peer, the reverse toward the interface), so a proxy may carry a single codec on either slot or both at once, and runs over `net.Socket` or the `SshStream` adapter that turns an `SshTransport` into a duplex byte stream.
 
 When a codec is activated with `track_statistics`, the relay wraps each direction with counting pass-throughs at the socket boundaries, mirroring the Go relay's count callbacks: bytes read from the local socket (`incoming_to_codec`), bytes written to the upstream socket (`codec_to_outgoing`), and the symmetric receive direction (`outgoing_to_codec` / `codec_to_incoming`). The positions hold for both chain sides because a proxy's single codec always sits between its local and upstream sockets, so the monitor `/status` payload reports the same counters the Go fleet does.
 
@@ -263,6 +263,7 @@ rm -f large-xcodec-fixture.bin large-file-smoke.bin large-file.log
 
 - Full C++ protocol compatibility has not been certified against a live C++ WANProxy peer.
 - The SSH transport is migrated and self-tested (client/server handshake and encrypted tunnel), but has not been certified for interoperability against a live OpenSSH or C++ WANProxy peer; it offers a focused algorithm suite (diffie-hellman-group-exchange-sha256/sha1, ssh-rsa, aes128/256-ctr/cbc, hmac-sha1/sha2-256/sha2-512) and does not implement user authentication or SSH channels.
-- The SSH tunnel proxy carries a raw byte stream over the transport; it does not yet compose the XCodec/zlib codec pipeline inside the SSH link the way the C++ `SSHProxyConnector` splices a codec pipe pair through `SSHStream`.
-- SSH-SSH proxies and proxies that combine an interface and a peer codec parse and validate from the classic config, but `RuntimeFleet` does not yet run them (it raises a clear error); the common single-codec-per-proxy WAN topology is fully supported.
+- SSH-SSH proxies are runnable (`src/proxy/ssh-ssh-proxy.ts`): the interface hop runs an SSH server transport and the peer hop an SSH client transport, and the codec pipeline is spliced between the two decrypted streams, mirroring the C++ `SSHProxyListener`/`SSHProxyConnector` pair. Packet tagging follows the C++ `SSHStream` framing rule (a hop is 0xff-tagged exactly when its codec is active; untagged hops carry `[uint32 length][data]` framing). The `ssh-echo` CLI (`src/cli/ssh-echo.ts`) is the in-process echo endpoint the chain terminates on, mirroring `wanbench ssh-echo`.
+- Proxies that combine an interface and a peer codec are runnable: the relay composes `[interface decode] → [peer encode]` (and the reverse) and counts the two internal boundaries, mirroring the Go `Relay`. The `SshTunnelClient`/`SshTunnelServer` helpers remain raw byte tunnels (no codec splice); use the SSH-SSH proxy type for a codec-bearing SSH link.
+- The relay's crossed protocol responses (`<ASK>`/`<LEARN>`/`<ADVANCE>`/`<EOS_ACK>`) are not yet routed back to the originating wire; half-close uses TCP/SSH FIN and the shared demo cache resolves references without `<ASK>`/`<LEARN>`, so the demo topologies are unaffected, but isolated per-peer caches would need this for full protocol fidelity.
 - Unix-domain-socket endpoints parse from the classic config, but the runtime fleet listens on TCP only.

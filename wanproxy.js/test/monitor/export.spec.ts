@@ -95,7 +95,9 @@ describe("exportHtml", () => {
         "OutgoingToCodec:2 CodecToIncoming:4}</td>",
     );
     // A codec without track_statistics renders an empty stats cell.
-    expect(html).toContain("<td>proxy1</td><td>tcp</td><td>true</td><td>1</td><td>0</td><td></td>");
+    expect(html).toContain(
+      "<td>proxy1</td><td>tcp</td><td>true</td><td>1</td><td>0</td><td></td>",
+    );
   });
 
   it("filters to one object and omits the status table", () => {

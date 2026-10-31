@@ -7,6 +7,7 @@ export * from "./runtime-fleet.js";
 export * from "./socket-utils.js";
 export * from "./socks-proxy.js";
 export * from "./socks-request.js";
+export * from "./ssh-ssh-proxy.js";
 export * from "./ssh-proxy.js";
 export * from "./tcp-proxy.js";
 export * from "./tcp-relay.js";
