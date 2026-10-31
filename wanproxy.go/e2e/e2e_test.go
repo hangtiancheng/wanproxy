@@ -15,11 +15,33 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func exeName(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
+}
+
+// terminate stops the daemon. Windows has no SIGTERM, so it kills instead.
+func terminate(p *os.Process) error {
+	if runtime.GOOS == "windows" {
+		return p.Kill()
+	}
+	return p.Signal(syscall.SIGTERM)
+}
+
+// exitOK reports whether the daemon's exit status is acceptable after
+// termination. A forced kill on Windows reports a non-nil error.
+func exitOK(err error) bool {
+	return err == nil || runtime.GOOS == "windows"
+}
 
 const configTemplate = `
 create log-mask catch-all
@@ -177,7 +199,7 @@ func TestDaemonEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 
 	// Build the daemon.
-	bin := filepath.Join(dir, "wanproxy")
+	bin := filepath.Join(dir, exeName("wanproxy"))
 	build := exec.Command("go", "build", "-o", bin, "./cmd/wanproxy")
 	build.Dir = ".."
 	if out, err := build.CombinedOutput(); err != nil {
@@ -356,13 +378,13 @@ func TestDaemonEndToEnd(t *testing.T) {
 		t.Fatalf("codec_to_outgoing = %d, want heavy deduplication of %d payload bytes", outgoing, len(payload))
 	}
 
-	// Graceful shutdown on SIGTERM.
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+	// Graceful shutdown on SIGTERM (forceful on Windows).
+	if err := terminate(cmd.Process); err != nil {
 		t.Fatalf("signal: %v", err)
 	}
 	select {
 	case err := <-waitCh:
-		if err != nil {
+		if !exitOK(err) {
 			t.Fatalf("daemon exited with error: %v\n%s", err, stderr.String())
 		}
 		shutdownDone = true

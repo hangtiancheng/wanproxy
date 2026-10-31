@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -240,7 +241,12 @@ func (d *Daemon) Stop() {
 	}
 	if cmd != nil && cmd.Process != nil {
 		log.Printf("[daemon] stopping wanproxy daemon (pid %d)", cmd.Process.Pid)
-		_ = cmd.Process.Signal(syscall.SIGTERM)
+		if runtime.GOOS == "windows" {
+			// Windows has no SIGTERM; termination is always forceful.
+			_ = cmd.Process.Kill()
+		} else {
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+		}
 		done := make(chan struct{})
 		go func() {
 			_, _ = cmd.Process.Wait()

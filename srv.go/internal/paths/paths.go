@@ -31,10 +31,17 @@ var (
 	XCachePath   = filepath.Join(DataDir, "wanproxy.xcache")
 	TemplatePath = filepath.Join(SRV_ROOT, "demo", "wanproxy.conf.template")
 
-	WanproxyBin = filepath.Join(WANPROXY_GO_ROOT, "bin", "wanproxy")
-	TackBin     = filepath.Join(WANPROXY_GO_ROOT, "bin", "tack")
-	XcdumpBin   = filepath.Join(WANPROXY_GO_ROOT, "bin", "xcdump")
+	WanproxyBin = binPath("wanproxy")
+	TackBin     = binPath("tack")
+	XcdumpBin   = binPath("xcdump")
 )
+
+func binPath(name string) string {
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(WANPROXY_GO_ROOT, "bin", name)
+}
 
 func resolveRoot() string {
 	if env := os.Getenv("SRV_ROOT"); env != "" {

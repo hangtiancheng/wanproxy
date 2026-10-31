@@ -13,7 +13,19 @@ import (
 	"github.com/hangtiancheng/wanproxy/wanproxy.go/common"
 	"github.com/hangtiancheng/wanproxy/wanproxy.go/pipeline"
 	"github.com/hangtiancheng/wanproxy/wanproxy.go/proxy"
+	"github.com/hangtiancheng/wanproxy/wanproxy.go/xcodec"
 )
+
+// releaseDisk closes the process-wide disk cache volume at path after the
+// test. Windows cannot remove a directory while files in it are open.
+func releaseDisk(t *testing.T, path string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if disk, err := xcodec.OpenDisk(path, 0, slog.Default()); err == nil {
+			_ = disk.Close()
+		}
+	})
+}
 
 // The exact wanproxy.conf shipped with the C++ implementation.
 const cppSampleConfig = `# Set log-mask before doing anything else so that there isn't a lot of noise.
@@ -135,6 +147,7 @@ func TestParseCppSampleConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
+	releaseDisk(t, dir+"/wanproxy.xcache")
 
 	if cfg.LogLevel != slog.LevelInfo {
 		t.Fatalf("log level = %v, want info", cfg.LogLevel)
@@ -427,6 +440,7 @@ func TestLoadDetectsFormat(t *testing.T) {
 	if err != nil || len(cfg.Proxies) != 2 {
 		t.Fatalf("classic load: %v %+v", err, cfg)
 	}
+	releaseDisk(t, dir+"/w.xcache")
 }
 
 func TestClassicDiskCachePathIsUnquoted(t *testing.T) {
@@ -461,6 +475,7 @@ activate p0
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
+	releaseDisk(t, dir+"/sub.xcache")
 	if len(cfg.Caches) != 1 {
 		t.Fatalf("caches = %d, want 1", len(cfg.Caches))
 	}

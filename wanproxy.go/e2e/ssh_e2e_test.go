@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -137,7 +136,7 @@ func TestDaemonSSHEndToEnd(t *testing.T) {
 	echoPort := echoLn.Addr().(*net.TCPAddr).Port
 
 	// Build the daemon.
-	bin := filepath.Join(dir, "wanproxy")
+	bin := filepath.Join(dir, exeName("wanproxy"))
 	build := exec.Command("go", "build", "-o", bin, "./cmd/wanproxy")
 	build.Dir = ".."
 	if out, err := build.CombinedOutput(); err != nil {
@@ -209,12 +208,12 @@ func TestDaemonSSHEndToEnd(t *testing.T) {
 		t.Fatalf("payload mismatch")
 	}
 
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+	if err := terminate(cmd.Process); err != nil {
 		t.Fatalf("signal: %v", err)
 	}
 	select {
 	case err := <-waitCh:
-		if err != nil {
+		if !exitOK(err) {
 			t.Fatalf("daemon exited with error: %v\n%s", err, stderr.String())
 		}
 		shutdownDone = true

@@ -75,6 +75,9 @@ const SSH_ECHO_PORT = Number(
 const PNPM = process.env.PNPM ?? "pnpm";
 const GO = process.env.GO ?? "go";
 
+const IS_WIN = process.platform === "win32";
+const EXE = IS_WIN ? ".exe" : "";
+
 const SRV_DIR = IS_JS ? "srv.js" : "srv.go";
 const DATA_DIR = join(ROOT, SRV_DIR, "data");
 const PID_DIR = join(DATA_DIR, "pids");
@@ -82,7 +85,7 @@ const SRV_LOG = join(DATA_DIR, "server.log");
 const WEB_LOG = join(DATA_DIR, "web.log");
 const SRV_PID = join(PID_DIR, "srv.pid");
 const WEB_PID = join(PID_DIR, "web.pid");
-const GO_BIN = join(ROOT, "srv.go", "bin", "wanproxy-srv");
+const GO_BIN = join(ROOT, "srv.go", "bin", `wanproxy-srv${EXE}`);
 const JS_MAIN = join(ROOT, "srv.js", "dist", "main.js");
 const WEB_DIR = join(ROOT, "web");
 const ALL_DATA_DIRS = [
@@ -98,8 +101,26 @@ function fail(msg) {
 
 // -------------------------------------------------------------------- helpers
 
+// pnpm is a .cmd shim on Windows; Node can only run it through a shell.
+function commandSpec(cmd, args) {
+  if (!IS_WIN || cmd !== PNPM) return { args, cmd };
+  const quote = (a) =>
+    /[\s"&|<>^()]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a;
+  return {
+    args: [],
+    cmd: [cmd, ...args].map(quote).join(" "),
+    shell: true,
+  };
+}
+
 function runInherit(cmd, args, opts = {}) {
-  const res = spawnSync(cmd, args, { stdio: "inherit", cwd: ROOT, ...opts });
+  const spec = commandSpec(cmd, args);
+  const res = spawnSync(spec.cmd, spec.args, {
+    stdio: "inherit",
+    cwd: ROOT,
+    ...(spec.shell ? { shell: true } : {}),
+    ...opts,
+  });
   if (res.error) fail(`${cmd} ${args.join(" ")}: ${res.error.message}`);
   if (res.status !== 0)
     fail(`${cmd} ${args.join(" ")} exited with ${res.status}`);
@@ -134,7 +155,7 @@ function buildGoBackend() {
   runInherit("make", ["-C", "wanproxy.go", "build"]);
   log("building srv.go");
   mkdirSync(join(ROOT, "srv.go", "bin"), { recursive: true });
-  runInherit(GO, ["build", "-o", "bin/wanproxy-srv", "./cmd/server"], {
+  runInherit(GO, ["build", "-o", `bin/wanproxy-srv${EXE}`, "./cmd/server"], {
     cwd: join(ROOT, "srv.go"),
   });
 }
@@ -175,6 +196,14 @@ function readPid(file) {
 }
 
 function killPid(pid, signal = "SIGTERM") {
+  if (!Number.isFinite(pid)) return false;
+  if (IS_WIN) {
+    const res = spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    return res.status === 0;
+  }
   try {
     process.kill(pid, signal);
     return true;
@@ -184,6 +213,21 @@ function killPid(pid, signal = "SIGTERM") {
 }
 
 function portPids(port) {
+  if (IS_WIN) {
+    const res = runCapture("netstat", ["-ano"]);
+    if (res.status !== 0 || !res.stdout) return [];
+    const pids = new Set();
+    for (const line of res.stdout.split(/\r?\n/)) {
+      const cols = line.trim().split(/\s+/);
+      if (cols.length < 5) continue;
+      if (cols[0].toUpperCase() !== "TCP") continue;
+      if (cols[3].toUpperCase() !== "LISTENING") continue;
+      if (!cols[1].endsWith(`:${port}`)) continue;
+      const pid = Number.parseInt(cols[4], 10);
+      if (Number.isFinite(pid)) pids.add(pid);
+    }
+    return [...pids];
+  }
   const res = runCapture("lsof", ["-ti", `tcp:${port}`, "-s", "tcp:listen"]);
   if (res.status !== 0 || !res.stdout) return [];
   return res.stdout
@@ -193,7 +237,7 @@ function portPids(port) {
 }
 
 function sleepSync(ms) {
-  spawnSync("sleep", [String(ms / 1000)]);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 // ------------------------------------------------------------------- commands
@@ -206,12 +250,21 @@ function dev() {
 
   const be = backendCommand();
   const web = webCommand();
-  const backend = spawn(be.cmd, be.args, {
+  const beSpec = commandSpec(be.cmd, be.args);
+  const webSpec = commandSpec(web.cmd, web.args);
+  const backend = spawn(beSpec.cmd, beSpec.args, {
     cwd: be.cwd,
     env: backendEnv(),
     stdio: "inherit",
+    ...(beSpec.shell ? { shell: true } : {}),
   });
-  const frontend = spawn(web.cmd, web.args, { cwd: web.cwd, stdio: "inherit" });
+  const frontend = spawn(webSpec.cmd, webSpec.args, {
+    cwd: web.cwd,
+    stdio: "inherit",
+    ...(webSpec.shell ? { shell: true } : {}),
+  });
+  backend.on("error", (err) => fail(`backend: ${err.message}`));
+  frontend.on("error", (err) => fail(`web: ${err.message}`));
 
   let shuttingDown = false;
   const cleanup = () => {
@@ -253,12 +306,16 @@ function webOnly() {
 
 function spawnDetached(spec, env, logFile) {
   const out = openSync(logFile, "a");
-  const child = spawn(spec.cmd, spec.args, {
+  const cmd = commandSpec(spec.cmd, spec.args);
+  const child = spawn(cmd.cmd, cmd.args, {
     cwd: spec.cwd,
     detached: true,
     env,
     stdio: ["ignore", out, out],
+    windowsHide: true,
+    ...(cmd.shell ? { shell: true } : {}),
   });
+  child.on("error", (err) => fail(`${spec.cmd}: ${err.message}`));
   child.unref();
   return child.pid;
 }
@@ -332,18 +389,25 @@ function logs() {
     log("no logs yet");
     return;
   }
+  if (IS_WIN) {
+    const paths = files.map((f) => `'${f.replace(/'/g, "''")}'`).join(",");
+    runInherit("powershell", [
+      "-NoProfile",
+      "-Command",
+      `Get-Content -Wait -Tail 40 -Path ${paths}`,
+    ]);
+    return;
+  }
   runInherit("tail", ["-n", "40", "-f", ...files]);
 }
 
 function openBrowser() {
   const url = `http://localhost:${WEB_PORT}`;
-  const cmd =
-    process.platform === "darwin"
-      ? "open"
-      : process.platform === "win32"
-        ? "start"
-        : "xdg-open";
-  runInherit(cmd, [url]);
+  if (IS_WIN) {
+    runInherit("cmd", ["/c", "start", "", url]);
+    return;
+  }
+  runInherit(process.platform === "darwin" ? "open" : "xdg-open", [url]);
 }
 
 function install() {
