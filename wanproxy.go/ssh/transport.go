@@ -92,6 +92,7 @@ type Transport struct {
 	firstBlock []byte // decrypted first block awaiting the rest
 	plainBuf   []byte // decoded application bytes
 	writeBuf   []byte // incomplete untagged frames
+	wireErr    error  // deferred read error when a read also delivered bytes
 
 	wmu           sync.Mutex // serializes packet sends
 	handshakeDone bool
@@ -494,8 +495,11 @@ func (t *Transport) clientKeyExchange(dh *dhState) error {
 	if len(rest) != 0 {
 		return errMalformed
 	}
-	if p.BitLen() < dhGroupMin {
-		return fmt.Errorf("ssh: DH prime too small (%d bits)", p.BitLen())
+	if p.BitLen() < dhGroupMin || p.BitLen() > dhGroupMax {
+		return fmt.Errorf("ssh: DH prime size out of range (%d bits)", p.BitLen())
+	}
+	if g.Cmp(big.NewInt(1)) <= 0 || g.Cmp(new(big.Int).Sub(p, big.NewInt(1))) >= 0 {
+		return errors.New("ssh: DH generator out of range")
 	}
 	dh.p, dh.g = p, g
 	if err := dh.generate(); err != nil {
@@ -730,13 +734,16 @@ func (t *Transport) writeAll(p []byte) error {
 		if err != nil {
 			return err
 		}
+		if n <= 0 || n > len(p) {
+			return io.ErrShortWrite
+		}
 		p = p[n:]
 	}
 	return nil
 }
 
 // sendPacket builds, MACs, encrypts and sends one packet.  It mirrors
-// TransportPipe::send, including the zero-padding scheme.
+// TransportPipe::send, with random packet padding.
 func (t *Transport) sendPacket(payload []byte) error {
 	t.wmu.Lock()
 	defer t.wmu.Unlock()
@@ -753,7 +760,9 @@ func (t *Transport) sendPacketLocked(payload []byte) error {
 	binary.BigEndian.PutUint32(packet[:4], uint32(packetLen))
 	packet[4] = byte(paddingLen)
 	copy(packet[5:], payload)
-	// Padding bytes remain zero, as in the C++ zero_padding.
+	if _, err := rand.Read(packet[5+len(payload):]); err != nil {
+		return err
+	}
 
 	var macBytes []byte
 	if t.sendMACAlg != nil {
@@ -777,10 +786,15 @@ func (t *Transport) sendPacketLocked(payload []byte) error {
 }
 
 func (t *Transport) fillWire() error {
+	if t.wireErr != nil {
+		return t.wireErr
+	}
 	buf := make([]byte, 32768)
 	n, err := t.conn.Read(buf)
 	if n > 0 {
 		t.wireBuf = append(t.wireBuf, buf[:n]...)
+		t.wireErr = err
+		return nil
 	}
 	if err != nil {
 		return err
@@ -799,7 +813,7 @@ func (t *Transport) readPacket() ([]byte, error) {
 		}
 
 		if len(t.firstBlock) == 0 {
-			if len(t.wireBuf) <= blockSize {
+			if len(t.wireBuf) < blockSize {
 				if err := t.fillWire(); err != nil {
 					return nil, err
 				}
@@ -818,8 +832,8 @@ func (t *Transport) readPacket() ([]byte, error) {
 			return nil, errMalformed
 		}
 		packetLen := binary.BigEndian.Uint32(t.firstBlock[:4])
-		if packetLen == 0 {
-			return nil, errors.New("ssh: zero-length packet")
+		if packetLen < 12 || (uint64(packetLen)+4)%uint64(blockSize) != 0 {
+			return nil, errors.New("ssh: invalid packet length or block alignment")
 		}
 		if packetLen > maxPacketSize {
 			return nil, fmt.Errorf("ssh: packet too large (%d bytes)", packetLen)
@@ -863,7 +877,7 @@ func (t *Transport) readPacket() ([]byte, error) {
 		t.recvSeq++
 
 		paddingLen := int(packet[4])
-		if paddingLen > len(packet)-5 {
+		if paddingLen < 4 || paddingLen > len(packet)-5 {
 			return nil, errors.New("ssh: padding too large for packet")
 		}
 		payload := packet[5 : len(packet)-paddingLen]
@@ -896,6 +910,9 @@ func (t *Transport) deliverApp(payload []byte) error {
 
 // Read returns decrypted application bytes.
 func (t *Transport) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
 	for len(t.plainBuf) == 0 {
 		payload, err := t.readPacket()
 		if err != nil {
@@ -932,20 +949,29 @@ func (t *Transport) Write(p []byte) (int, error) {
 	defer t.wmu.Unlock()
 
 	if t.cfg.Tagged {
-		payload := make([]byte, 0, 1+len(p))
-		payload = append(payload, appPacketTag)
-		payload = append(payload, p...)
-		if err := t.sendPacketLocked(payload); err != nil {
-			return 0, err
+		written := 0
+		for len(p) > 0 {
+			size := min(len(p), 32768)
+			payload := make([]byte, 1, 1+size)
+			payload[0] = appPacketTag
+			payload = append(payload, p[:size]...)
+			if err := t.sendPacketLocked(payload); err != nil {
+				return written, err
+			}
+			written += size
+			p = p[size:]
 		}
-		return len(p), nil
+		return written, nil
 	}
 
 	// Untagged: consume [uint32 length][data] frames, mirroring
 	// SSHStream::write_do.
 	t.writeBuf = append(t.writeBuf, p...)
-	for len(t.writeBuf) > 4 {
+	for len(t.writeBuf) >= 4 {
 		frameLen := binary.BigEndian.Uint32(t.writeBuf[:4])
+		if frameLen == 0 || frameLen > maxPacketSize-256 {
+			return 0, errors.New("ssh: invalid application frame length")
+		}
 		if uint64(frameLen) > uint64(len(t.writeBuf)-4) {
 			break // Wait for more write data.
 		}

@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"strconv"
 
@@ -57,10 +59,13 @@ type JSONFileConfig struct {
 // to the interface (listen) side.
 func ParseJSON(data []byte) (*Config, error) {
 	var file JSONFileConfig
-	dec := json.NewDecoder(bytesReader(data))
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&file); err != nil {
 		return nil, fmt.Errorf("invalid JSON configuration: %w", err)
+	}
+	if err := dec.Decode(new(any)); err != io.EOF {
+		return nil, fmt.Errorf("invalid JSON configuration: trailing content")
 	}
 
 	cfg := &Config{LogLevel: slog.LevelInfo}
@@ -94,8 +99,8 @@ func ParseJSON(data []byte) (*Config, error) {
 			spec := &pipeline.CodecSpec{Mode: mode, CompressorLevel: -1}
 			if p.Codec.CompressorLevel != nil {
 				level := *p.Codec.CompressorLevel
-				if level < -1 || level > 9 {
-					return nil, fmt.Errorf("proxies[%d].codec: compressorLevel %d out of range -1..9", i, level)
+				if level < -2 || level > 9 {
+					return nil, fmt.Errorf("proxies[%d].codec: compressorLevel %d out of range -2..9", i, level)
 				}
 				spec.CompressorLevel = level
 			}

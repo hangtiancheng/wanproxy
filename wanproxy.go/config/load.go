@@ -1,9 +1,7 @@
 package config
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 )
@@ -38,5 +36,3 @@ func looksLikeJSON(data []byte) bool {
 	}
 	return false
 }
-
-func bytesReader(data []byte) io.Reader { return bytes.NewReader(data) }

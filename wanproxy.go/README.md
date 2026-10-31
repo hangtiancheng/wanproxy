@@ -1,6 +1,6 @@
 # wanproxy.go
 
-A Go port of [WANProxy](https://github.com/wanproxy/wanproxy), the TCP
+A Go rewrite of [WANProxy](https://github.com/wanproxy/wanproxy), the TCP
 WAN-optimization proxy.  The migration targets the core of the C++
 original — the **XCodec deduplication codec**, the **pipe protocol**
 session, the **zlib composition**, the **SSH transport**, the
@@ -10,7 +10,10 @@ tools** —
 built on the Go standard library (`net`, `compress/zlib`, `net/http`,
 `crypto/*`, `encoding/binary`, `math/big`, `log/slog`).
 
-The C++ original is the source of truth (see *Deviations*).
+The C++ original documents the core algorithms and legacy wire format.
+Correctness, bounded streaming and idiomatic Go take precedence over
+reproducing its implementation or bugs. See [the migration review](MIGRATION_REVIEW.md)
+for the architecture, fixes and remaining design work.
 
 ## Layout
 
@@ -50,6 +53,9 @@ The C++ original is the source of truth (see *Deviations*).
   deduplication.  `e2e/` builds and runs the daemon with the classic
   config topology (SOCKS client → proxy0 → xcodec+zlib WAN → proxy1 →
   proxy-socks0 → server) and asserts the wire-byte reduction.
+  Three-proxy tests exercise both codec slots with 18 MiB transfers and
+  tiny caches. `proxy/flow_test.go` uses unbuffered `net.Pipe` links to
+  verify control traffic progresses during blocked writes.
 * **Original config**: `config/config_test.go` parses the exact
   `wanproxy.conf` shipped with the C++ implementation, including the
   SSH-SSH proxy type with PEM host keys.
@@ -168,7 +174,25 @@ peer's stream are written back on the same wire (through the same
 deflate stream) their frames arrived on.  Half-close propagates with
 `<EOS>`/`<EOS_ACK>` plus TCP `CloseWrite`, and each direction drains
 its source socket to EOF before the relay closes anything, so final
-frames are never lost to a reset.
+frames are not lost to a reset during normal shutdown.
+
+The Go relay gives socket reads, application forwarding and protocol
+response writes separate goroutines. Bounded queues connect them;
+`ADVANCE` and `EOS_ACK` are sent after their plaintext has been forwarded.
+This keeps a blocked socket writer from stopping the reader that must
+process the control frames needed to unblock it. Plain forwarding uses
+`io.Copy` directly.
+
+Sessions default to at most 8 MiB / 256 unacknowledged plaintext frames.
+`EncodeData` returns `ErrBackpressure` when full; `EncodeDataContext` waits
+for `ADVANCE` or cancellation. Receive buffers, output per Receive and each
+relay queue have 16 MiB limits. These are per-buffer/queue limits, not a process memory
+budget. Shared caches have their own sizing rules.
+
+Listeners support `DialContext`; default dialing has a 30-second timeout.
+`Stop` cancels dialing, closes tracked sockets and joins connection handlers.
+SOCKS negotiation defaults to a 15-second deadline. Embedded users should
+stop the fleet before calling `Config.Close`, which releases disk volumes.
 
 
 The identity announced in `<HELLO>` is the **cache UUID**, stable
@@ -181,9 +205,10 @@ references resolve without new `<ASK>`/`<LEARN>` exchanges.
 * **SSH NEWKEYS**: the C++ code never sends the first NEWKEYS message
   (acknowledged by two XXX comments), which leaves the data phase
   unencrypted.  This port sends NEWKEYS after key exchange as the RFC
-  requires; the C++ NEWKEYS handler replies and activates keys, so the
-  two implementations interoperate in both directions and Go↔Go links
-  are actually encrypted.
+  requires. Go↔Go encrypted exchanges are tested; C++ interoperability
+  remains a separate validation target. Packet padding is random, and
+  malformed packet alignment, oversized application frames and degenerate
+  DH public values are rejected.
 * **SSH algorithm subset**: the C++ table entries without Go standard
   library equivalents are omitted — blowfish/cast128/idea ciphers and
   hmac-ripemd160.  The negotiated defaults (aes128-ctr, hmac-sha1,
@@ -198,9 +223,22 @@ references resolve without new `<ASK>`/`<LEARN>` exchanges.
 * **XCDFS in-flight index**: as in C++, the in-flight index block is
   only written when it fills (the documented "little consistency"
   tradeoff), so up to 203 entries are lost on exit.
+* **XCDFS ownership**: shared opens are initialized before publication and
+  reference counted. Existing volumes cannot be resized implicitly. Empty
+  namespaces are collected on load, rather than reusing live cache handles
+  when the registry fills; an exhausted disk decoder falls back to memory.
+* **SOCKS**: success follows a successful target dial. SOCKS5 replies carry
+  the outbound socket's bound address, including the correct IPv6 type;
+  failed dials return failure codes. Buffered application data is preserved
+  for both SOCKS4 and SOCKS5.
+* **Session lifecycle**: data after EOS, premature EOS_ACK and truncated
+  transport shutdown are errors. LEARN answers are pinned until pending
+  decoding completes, independently of shared-cache eviction.
 * **tack**: decode failures now surface as a non-zero exit code (the
   C++ version logs and exits 0); `-T/-E/-S` timing output goes to
-  stderr in plain lines rather than through the C++ log format.
+  stderr in plain lines rather than through the C++ log format. Buffered
+  output and dictionary flush failures propagate to the exit status;
+  hashing is independent of source read boundaries.
 * **diskdup exit codes**: read/write failures and a volume ending
   mid-block exit non-zero (the C++ version logs and exits 0), matching
   the tack deviation above.
@@ -221,5 +259,5 @@ references resolve without new `<ASK>`/`<LEARN>` exchanges.
   `WARNING`/`NOTICE` → Warn, `INFO` → Info, `DEBUG` → Debug.
 * **XCodecCache::connect registry**: the C++ process-global UUID map is
   replaced by per-cache child maps (memory caches) and the shared XCDFS
-  registry (disk caches); observable behaviour is the same.
+  registry (disk caches).
 * **SOCKS4A** is not supported, matching the C++ implementation.

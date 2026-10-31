@@ -308,3 +308,26 @@ func TestChainDeduplication(t *testing.T) {
 func xcodecCacheForTest() *xcodec.MemoryCache {
 	return xcodec.NewMemoryCache()
 }
+
+// Exercise both codec slots at once, with more data than a session window.
+func TestThreeProxyChainWithSmallCaches(t *testing.T) {
+	for _, mode := range []pipeline.Mode{pipeline.ModeXCodec, pipeline.ModeZlibXCodec} {
+		t.Run(mode.String(), func(t *testing.T) {
+			echo, stopEcho := startEchoServer(t)
+			defer stopEcho()
+			codec := func() *pipeline.CodecSpec {
+				return &pipeline.CodecSpec{Mode: mode, CompressorLevel: 1, Cache: xcodec.NewMemoryCache(xcodec.WithSegmentLimit(3))}
+			}
+			last, lastAddr := startTCPProxy(t, "last", endpointOf(t, echo), codec(), nil)
+			defer last.Stop()
+			middle, middleAddr := startTCPProxy(t, "middle", lastAddr, codec(), codec())
+			defer middle.Stop()
+			first, firstAddr := startTCPProxy(t, "first", middleAddr, nil, codec())
+			defer first.Stop()
+			payload := testPayload(18 << 20)
+			if got := roundtrip(t, firstAddr, payload); !bytes.Equal(got, payload) {
+				t.Fatalf("large chain: got %d bytes of %d", len(got), len(payload))
+			}
+		})
+	}
+}

@@ -298,6 +298,12 @@ func TestXCDFSSharedOpen(t *testing.T) {
 		t.Fatalf("same path must share one Disk")
 	}
 	d1.Close()
+	seg := testSegment(0x31)
+	d2.Local().Enter(HashSegment(seg), seg)
+	if got := d2.Local().Lookup(HashSegment(seg)); !bytes.Equal(got, seg) {
+		t.Fatal("closing one owner broke the other shared handle")
+	}
+	d2.Close()
 }
 
 func TestXCDFSTooSmall(t *testing.T) {

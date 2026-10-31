@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -38,10 +40,12 @@ const (
 // is safe for concurrent use; all state and file access is serialized
 // under one mutex.
 type Disk struct {
-	mu   sync.Mutex
-	file *os.File
-	path string
-	log  *slog.Logger
+	mu       sync.Mutex
+	file     *os.File
+	path     string
+	log      *slog.Logger
+	refs     int   // guarded by diskMapMu; one reference per OpenDisk
+	writeErr error // a failed write disables subsequent mutations
 
 	diskBlocks  uint64
 	indexBlocks uint64
@@ -78,15 +82,32 @@ func OpenDisk(path string, size uint64, log *slog.Logger) (*Disk, error) {
 		log = slog.Default()
 	}
 
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	// Canonicalize existing symlinks before looking up the shared handle.
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	} else if parent, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
+		path = filepath.Join(parent, filepath.Base(path))
+	}
+	if size > math.MaxInt64 || (size != 0 && size < (xcdfsRegistryBlocks+1+xcdfsEntriesPerIndexBlock)*xcdfsBlockSize) {
+		return nil, errors.New("invalid XCDFS volume size")
+	}
+	// Publish only fully initialized volumes. Serializing opens also prevents
+	// a second open from truncating a file while the first is loading it.
 	diskMapMu.Lock()
+	defer diskMapMu.Unlock()
 	if d, ok := diskMap[path]; ok {
-		diskMapMu.Unlock()
-		log.Info("multiple distinct opens of disk; disk will be shared", "path", path)
+		if size != 0 && size/xcdfsBlockSize != d.diskBlocks {
+			return nil, errors.New("cannot resize an open XCDFS volume")
+		}
+		d.refs++
 		return d, nil
 	}
-	diskMapMu.Unlock()
 
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o700)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("could not open disk: %w", err)
 	}
@@ -96,6 +117,10 @@ func OpenDisk(path string, size uint64, log *slog.Logger) (*Disk, error) {
 		return nil, fmt.Errorf("could not stat disk: %w", err)
 	}
 	if size != 0 && st.Mode().IsRegular() {
+		if st.Size() != 0 && uint64(st.Size()) != size {
+			f.Close()
+			return nil, errors.New("cannot resize an existing XCDFS volume")
+		}
 		if err := f.Truncate(int64(size)); err != nil {
 			f.Close()
 			return nil, fmt.Errorf("could not truncate/extend disk: %w", err)
@@ -112,33 +137,22 @@ func OpenDisk(path string, size uint64, log *slog.Logger) (*Disk, error) {
 	d := &Disk{
 		file:       f,
 		path:       path,
+		refs:       1,
 		log:        log.With("component", "/xcodec/disk"),
 		diskBlocks: size / xcdfsBlockSize,
 		xuidCaches: make(map[uint16]*DiskCache),
 		uuidXUID:   make(map[CacheID]uint16),
 	}
+	if d.diskBlocks < xcdfsRegistryBlocks+1+xcdfsEntriesPerIndexBlock {
+		f.Close()
+		return nil, errors.New("disk too small for an XCDFS index and data group")
+	}
 	d.indexBlocks = (d.diskBlocks - xcdfsRegistryBlocks) / (1 + xcdfsEntriesPerIndexBlock)
-	if d.indexBlocks == 0 {
-		f.Close()
-		return nil, errors.New("disk too small; reduce XCDFS_BLOCK_SIZE")
-	}
-
-	diskMapMu.Lock()
-	if other, ok := diskMap[path]; ok {
-		diskMapMu.Unlock()
-		f.Close()
-		return other, nil
-	}
-	diskMap[path] = d
-	diskMapMu.Unlock()
-
 	if err := d.load(); err != nil {
-		diskMapMu.Lock()
-		delete(diskMap, path)
-		diskMapMu.Unlock()
 		f.Close()
 		return nil, err
 	}
+	diskMap[path] = d
 	return d, nil
 }
 
@@ -297,7 +311,10 @@ func (d *Disk) registryLoad() error {
 	}
 
 	// Establish a local UUID if we do not have one.
-	if len(d.xuidCaches) == 0 {
+	if d.xuidCaches[xcdfsXUIDLocal] == nil {
+		if len(d.xuidCaches) != 0 {
+			return errors.New("XCDFS registry has peer namespaces but no local identity")
+		}
 		var uuid CacheID
 		if _, err := rand.Read(uuid[:]); err != nil {
 			return fmt.Errorf("could not generate local UUID: %w", err)
@@ -466,16 +483,23 @@ func (d *Disk) indexInvalidateEntries(indexBlock uint64) error {
 // Cache front-end operations, called with d.mu held by the DiskCache
 // methods below.
 
-func (d *Disk) enter(cache *DiskCache, hash uint64, seg []byte) error {
+func (d *Disk) enter(cache *DiskCache, hash uint64, seg []byte) (err error) {
+	if d.writeErr != nil {
+		return d.writeErr
+	}
+	defer func() {
+		if err != nil {
+			d.writeErr = err
+		}
+	}()
 	var entry [10]byte
 	binary.LittleEndian.PutUint16(entry[:2], cache.xuid)
 	binary.LittleEndian.PutUint64(entry[2:], hash)
-	d.indexBlock = append(d.indexBlock, entry[:]...)
-
 	offset := d.dataBlockAddress(d.currentIndexBlock, d.indexBlockNext)
 	if err := d.blockWrite(seg, offset); err != nil {
 		return fmt.Errorf("could not write data segment: %w", err)
 	}
+	d.indexBlock = append(d.indexBlock, entry[:]...)
 	cache.hashCode[hash] = offset
 
 	d.indexBlockNext++
@@ -495,7 +519,7 @@ func (d *Disk) enter(cache *DiskCache, hash uint64, seg []byte) error {
 		// We are going to be rewriting the entries associated with
 		// the new index block; purge them from memory.
 		if err := d.indexInvalidateEntries(d.currentIndexBlock); err != nil {
-			d.log.Error("could not invalidate new index block; expect inconsistency", "error", err)
+			return fmt.Errorf("could not invalidate new index block: %w", err)
 		}
 
 		// A counter of 0 always indicates unused.
@@ -556,13 +580,10 @@ func (d *Disk) allocXUID() (uint16, error) {
 	}
 	xuid := find()
 	if xuid == xcdfsXUIDCount {
-		if err := d.registryCollect(); err != nil {
-			return 0, fmt.Errorf("failed to collect registry under XUID exhaustion: %w", err)
-		}
-		xuid = find()
-		if xuid == xcdfsXUIDCount {
-			return 0, errors.New("exhausted XUIDs for disk; cannot connect new UUID")
-		}
+		// Empty front-ends may still be held by active sessions. Reusing
+		// their XUID would put later writes into another peer's namespace.
+		// Collection is safe during load, before handing out front-ends.
+		return 0, errors.New("exhausted XUIDs for disk; cannot connect new UUID")
 	}
 	return xuid, nil
 }
@@ -590,13 +611,18 @@ func (d *Disk) Path() string { return d.path }
 
 // Close flushes and closes the volume, removing it from the shared map.
 func (d *Disk) Close() error {
+	diskMapMu.Lock()
+	defer diskMapMu.Unlock()
+	if d.refs == 0 {
+		return nil
+	}
+	d.refs--
+	if d.refs > 0 {
+		return nil
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	diskMapMu.Lock()
-	if cur, ok := diskMap[d.path]; ok && cur == d {
-		delete(diskMap, d.path)
-	}
-	diskMapMu.Unlock()
+	delete(diskMap, d.path)
 	return d.file.Close()
 }
 

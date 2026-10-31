@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -49,6 +50,9 @@ func ParseSize(s string) (int64, error) {
 	n, err := strconv.ParseInt(strings.TrimSpace(s), 0, 64)
 	if err != nil {
 		return 0, fmt.Errorf("invalid size %q", s)
+	}
+	if n < 0 || n > math.MaxInt64/mult {
+		return 0, fmt.Errorf("size %q is negative or overflows int64", s)
 	}
 	return n * mult, nil
 }

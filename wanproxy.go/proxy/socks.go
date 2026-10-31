@@ -2,88 +2,54 @@ package proxy
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
-	"sync"
+	"syscall"
+	"time"
 )
 
-// SocksListener is a SOCKS4/SOCKS5 CONNECT proxy, mirroring the C++
-// ProxySocksListener and ProxySocksConnection: the CONNECT response is
-// written as soon as the request is parsed (before the upstream
-// connection is established, exactly like the C++ implementation), and
-// the connection is then relayed without any codec.
+// SocksListener serves SOCKS4/SOCKS5 CONNECT requests. A successful
+// response is sent only after the target connection has been established.
 type SocksListener struct {
-	Name  string
-	Iface Endpoint
-	Log   *slog.Logger
-	Dial  func(network, addr string) (net.Conn, error) // test hook
+	Name        string
+	Iface       Endpoint
+	Log         *slog.Logger
+	DialContext func(context.Context, string, string) (net.Conn, error)
+	// Dial is a legacy test hook; it must return before Stop can finish.
+	// Prefer DialContext for cancellable dialing.
+	Dial func(network, addr string) (net.Conn, error)
+	// HandshakeTimeout bounds SOCKS negotiation; zero means 15 seconds.
+	HandshakeTimeout time.Duration
 
-	mu                  sync.Mutex
-	listener            net.Listener
-	acceptedConnections int64
-	active              map[net.Conn]struct{}
-	stopped             bool
+	listenerState
 }
 
 // Start begins listening and accepting SOCKS clients.
 func (l *SocksListener) Start() error {
-	if l.Log == nil {
-		l.Log = slog.Default()
-	}
-	if l.Dial == nil {
-		var d net.Dialer
-		l.Dial = d.Dial
-	}
 	if !l.Iface.Valid() {
 		return fmt.Errorf("socks proxy %q: interface endpoint is incomplete", l.Name)
 	}
-
-	ln, err := net.Listen(l.Iface.Network(), l.Iface.Addr())
-	if err != nil {
-		return fmt.Errorf("socks proxy %q: %w", l.Name, err)
+	if l.Log == nil {
+		l.Log = slog.Default()
 	}
-
-	l.mu.Lock()
-	if l.stopped {
-		l.mu.Unlock()
-		ln.Close()
-		return errors.New("proxy: socks listener already stopped")
-	}
-	l.listener = ln
-	l.active = make(map[net.Conn]struct{})
-	l.mu.Unlock()
-
-	go l.acceptLoop()
-	return nil
-}
-
-func (l *SocksListener) acceptLoop() {
-	for {
-		conn, err := l.listener.Accept()
-		if err != nil {
-			l.mu.Lock()
-			stopped := l.stopped
-			l.mu.Unlock()
-			if !stopped {
-				l.Log.Error("accept failed", "proxy", l.Name, "error", err)
-			}
-			return
-		}
-		l.mu.Lock()
-		l.acceptedConnections++
-		l.active[conn] = struct{}{}
-		l.mu.Unlock()
-		go l.handle(conn)
-	}
+	return l.start(l.Iface, l.Log, l.Name, l.handle)
 }
 
 func (l *SocksListener) handle(client net.Conn) {
 	defer l.drop(client)
 
+	timeout := l.HandshakeTimeout
+	if timeout == 0 {
+		timeout = 15 * time.Second
+	}
+	if err := client.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return
+	}
 	request, err := readSocksConnectRequest(client)
 	if err != nil {
 		l.Log.Debug("socks handshake failed", "proxy", l.Name, "error", err)
@@ -91,23 +57,23 @@ func (l *SocksListener) handle(client net.Conn) {
 		return
 	}
 
-	// Like the C++ implementation, answer before connecting.
-	if _, err := client.Write(request.response); err != nil {
-		client.Close()
-		return
-	}
-
 	network, addr := request.networkAddr()
-	upstream, err := l.Dial(network, addr)
+	upstream, err := dialPeer(l.ctx, l.DialContext, l.Dial, network, addr)
 	if err != nil {
-		l.Log.Error("could not connect to socks target", "proxy", l.Name, "target", addr, "error", err)
-		client.Close()
+		l.Log.Debug("could not connect to socks target", "proxy", l.Name, "target", addr, "error", err)
+		_ = writeFull(client, request.failureResponse(err))
 		return
 	}
-	l.mu.Lock()
-	l.active[upstream] = struct{}{}
-	l.mu.Unlock()
+	if !l.track(upstream) {
+		return
+	}
 	defer l.drop(upstream)
+	if err := writeFull(client, request.successResponse(upstream.LocalAddr())); err != nil {
+		return
+	}
+	if err := client.SetDeadline(time.Time{}); err != nil {
+		return
+	}
 
 	relay, err := NewRelay(client, upstream, nil, nil, l.Log)
 	if err != nil {
@@ -117,70 +83,13 @@ func (l *SocksListener) handle(client net.Conn) {
 	}
 	// Replay any data the client sent right after the request.
 	if len(request.buffered) > 0 {
-		if _, err := upstream.Write(request.buffered); err != nil {
+		if err := writeFull(upstream, request.buffered); err != nil {
 			client.Close()
 			upstream.Close()
 			return
 		}
 	}
 	relay.Run()
-}
-
-func (l *SocksListener) drop(conn net.Conn) {
-	l.mu.Lock()
-	delete(l.active, conn)
-	l.mu.Unlock()
-}
-
-// Stop closes the listener and all active connections.
-func (l *SocksListener) Stop() error {
-	l.mu.Lock()
-	l.stopped = true
-	ln := l.listener
-	conns := make([]net.Conn, 0, len(l.active))
-	for conn := range l.active {
-		conns = append(conns, conn)
-	}
-	l.mu.Unlock()
-
-	for _, conn := range conns {
-		conn.Close()
-	}
-	if ln != nil {
-		return ln.Close()
-	}
-	return nil
-}
-
-// Listening reports whether the listener is active.
-func (l *SocksListener) Listening() bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.listener != nil && !l.stopped
-}
-
-// Address returns the bound address, if listening.
-func (l *SocksListener) Address() *BoundAddress {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.stopped {
-		return nil
-	}
-	return boundAddressOf(l.listener)
-}
-
-// AcceptedConnections returns the number of accepted client connections.
-func (l *SocksListener) AcceptedConnections() int64 {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.acceptedConnections
-}
-
-// ActiveSockets returns the number of tracked sockets.
-func (l *SocksListener) ActiveSockets() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.active)
 }
 
 // socksConnectRequest is a parsed SOCKS CONNECT request.
@@ -190,7 +99,6 @@ type socksConnectRequest struct {
 	port     uint16
 	addrType byte   // SOCKS5 address type actually supplied
 	rawAddr  []byte // raw address bytes (4 or 16), when not a domain
-	response []byte // success response to send, C++ style
 	buffered []byte // bytes read past the end of the request
 }
 
@@ -214,10 +122,24 @@ func readSocksConnectRequest(conn net.Conn) (*socksConnectRequest, error) {
 		return nil, err
 	}
 	switch version {
-	case 0x04:
-		return readSocks4Request(br)
-	case 0x05:
-		return readSocks5Request(conn, br)
+	case 0x04, 0x05:
+		var req *socksConnectRequest
+		if version == 0x04 {
+			req, err = readSocks4Request(br)
+		} else {
+			req, err = readSocks5Request(conn, br)
+		}
+		if err != nil {
+			return nil, err
+		}
+		// bufio may have read application bytes with either protocol.
+		if n := br.Buffered(); n > 0 {
+			req.buffered = make([]byte, n)
+			if _, err := io.ReadFull(br, req.buffered); err != nil {
+				return nil, err
+			}
+		}
+		return req, nil
 	default:
 		return nil, fmt.Errorf("unsupported SOCKS version %d", version)
 	}
@@ -244,7 +166,10 @@ func readSocks4Request(br *bufio.Reader) (*socksConnectRequest, error) {
 	}
 
 	// Consume the null-terminated user id.
-	for {
+	for length := 0; ; length++ {
+		if length > 1024 {
+			return nil, errors.New("SOCKS4 user id too long")
+		}
 		b, err := br.ReadByte()
 		if err != nil {
 			return nil, err
@@ -261,7 +186,6 @@ func readSocks4Request(br *bufio.Reader) (*socksConnectRequest, error) {
 		port:     port,
 		addrType: 0x01,
 		rawAddr:  addr,
-		response: []byte{0x00, 0x5a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
 	}, nil
 }
 
@@ -284,9 +208,10 @@ func readSocks5Request(conn net.Conn, br *bufio.Reader) (*socksConnectRequest, e
 		}
 	}
 	if !noAuth {
+		_ = writeFull(conn, []byte{0x05, 0xff})
 		return nil, errors.New("SOCKS5 no-auth method is required")
 	}
-	if _, err := conn.Write([]byte{0x05, 0x00}); err != nil {
+	if err := writeFull(conn, []byte{0x05, 0x00}); err != nil {
 		return nil, err
 	}
 
@@ -337,27 +262,45 @@ func readSocks5Request(conn net.Conn, br *bufio.Reader) (*socksConnectRequest, e
 	}
 	req.port = binary.BigEndian.Uint16(portBuf[:])
 
-	// Build the C++ style success response: it is "fun to lie about
-	// what kind of name we were given", echoing a domain as type 0x03
-	// and raw address bytes as type 0x01.
-	resp := []byte{0x05, 0x00, 0x00}
-	if req.addrType == 0x03 {
-		resp = append(resp, 0x03, byte(len(req.host)))
-		resp = append(resp, req.host...)
-	} else {
-		resp = append(resp, 0x01)
-		resp = append(resp, req.rawAddr...)
-	}
-	resp = append(resp, portBuf[0], portBuf[1])
-	req.response = resp
-
-	// Capture anything the client already sent after the request.
-	if n := br.Buffered(); n > 0 {
-		buffered := make([]byte, n)
-		if _, err := io.ReadFull(br, buffered); err != nil {
-			return nil, err
-		}
-		req.buffered = buffered
-	}
 	return req, nil
+}
+
+func (r *socksConnectRequest) successResponse(addr net.Addr) []byte {
+	if r.version == 4 {
+		return []byte{0, 0x5a, 0, 0, 0, 0, 0, 0}
+	}
+	// RFC 1928 BND.ADDR/BND.PORT describe the proxy's bound endpoint.
+	ip := net.IPv4zero.To4()
+	port := 0
+	if tcp, ok := addr.(*net.TCPAddr); ok {
+		ip, port = tcp.IP, tcp.Port
+	}
+	response := []byte{5, 0, 0, 1}
+	if ipv4 := ip.To4(); ipv4 != nil {
+		response = append(response, ipv4...)
+	} else {
+		response[3] = 4
+		response = append(response, ip.To16()...)
+	}
+	return binary.BigEndian.AppendUint16(response, uint16(port))
+}
+
+func (r *socksConnectRequest) failureResponse(err error) []byte {
+	if r.version == 4 {
+		return []byte{0, 0x5b, 0, 0, 0, 0, 0, 0}
+	}
+	code := byte(1)
+	var dns *net.DNSError
+	var neterr net.Error
+	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		code = 5
+	case errors.Is(err, syscall.ENETUNREACH):
+		code = 3
+	case errors.Is(err, syscall.EHOSTUNREACH), errors.As(err, &dns):
+		code = 4
+	case errors.As(err, &neterr) && neterr.Timeout():
+		code = 6
+	}
+	return []byte{5, code, 0, 1, 0, 0, 0, 0, 0, 0}
 }

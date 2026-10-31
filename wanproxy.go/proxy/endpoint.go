@@ -78,7 +78,7 @@ func FormatEndpoint(e Endpoint) string {
 	if e.Family == FamilyUnix {
 		return e.Path
 	}
-	return e.Host + ":" + e.Port
+	return net.JoinHostPort(e.Host, e.Port)
 }
 
 // BoundAddress is a resolved listening address.

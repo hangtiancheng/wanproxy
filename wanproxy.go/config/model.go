@@ -9,7 +9,10 @@ package config
 
 import (
 	"crypto/rsa"
+	"errors"
+	"io"
 	"log/slog"
+	"sync"
 
 	"github.com/hangtiancheng/wanproxy/wanproxy.go/pipeline"
 	"github.com/hangtiancheng/wanproxy/wanproxy.go/proxy"
@@ -93,8 +96,23 @@ type Config struct {
 	// Objects lists every created object for monitor export.
 	Objects []Object
 
-	// Caches lists the activated caches so the owner can close them.
+	// Caches lists activated cache views. Close releases their owned volumes.
 	Caches []xcodec.Cache
+
+	resources []io.Closer
+	closeOnce sync.Once
+	closeErr  error
+}
+
+// Close releases owned disk volumes. Call it after all proxy handlers stop.
+// It is safe to call repeatedly, including after partial startup failure.
+func (c *Config) Close() error {
+	c.closeOnce.Do(func() {
+		for i := len(c.resources) - 1; i >= 0; i-- {
+			c.closeErr = errors.Join(c.closeErr, c.resources[i].Close())
+		}
+	})
+	return c.closeErr
 }
 
 // HasProxies reports whether any proxy was configured.

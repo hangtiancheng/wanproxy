@@ -89,10 +89,14 @@ func (d *dhState) generate() error {
 }
 
 func (d *dhState) computeShared(peerPub *big.Int) error {
-	if peerPub.Sign() <= 0 || peerPub.Cmp(d.p) >= 0 {
+	upper := new(big.Int).Sub(d.p, big.NewInt(1))
+	if peerPub.Cmp(big.NewInt(1)) <= 0 || peerPub.Cmp(upper) >= 0 {
 		return errors.New("ssh: peer DH public key out of range")
 	}
 	d.shared = new(big.Int).Exp(peerPub, d.x, d.p)
+	if d.shared.Cmp(big.NewInt(1)) <= 0 {
+		return errors.New("ssh: degenerate DH shared secret")
+	}
 	return nil
 }
 

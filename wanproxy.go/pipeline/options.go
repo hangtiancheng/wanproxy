@@ -5,6 +5,7 @@
 package pipeline
 
 import (
+	"compress/zlib"
 	"fmt"
 	"sync/atomic"
 
@@ -174,6 +175,23 @@ type CodecSpec struct {
 
 	// Stats holds the byte counters when TrackStatistics is set.
 	Stats *CodecStats
+}
+
+// Validate rejects invalid runtime codec settings before accepting traffic.
+func (c *CodecSpec) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if c.Mode < ModeNone || c.Mode > ModeZlibXCodec {
+		return fmt.Errorf("pipeline: invalid codec mode %d", c.Mode)
+	}
+	if c.NeedsSession() && c.Cache == nil {
+		return fmt.Errorf("pipeline: XCodec requires a cache")
+	}
+	if c.NeedsCompressor() && (c.CompressorLevel < zlib.HuffmanOnly || c.CompressorLevel > zlib.BestCompression) {
+		return fmt.Errorf("pipeline: invalid compressor level %d", c.CompressorLevel)
+	}
+	return nil
 }
 
 // NeedsSession reports whether the codec runs an XCodec pipe session.

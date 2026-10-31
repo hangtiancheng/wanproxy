@@ -104,7 +104,7 @@ func (e *Encoder) EncodeWithReferences(input []byte) ([]byte, map[uint64][]byte)
 		// with the data that the rolling hash presently covers,
 		// declare it now.
 		if cand.set && cand.offset+SegmentLength <= start {
-			output = e.encodeDeclaration(output, input, consumed, cand.offset, cand.hash)
+			output = e.encodeDeclaration(output, input, consumed, cand.offset, cand.hash, refs)
 			consumed = cand.offset + SegmentLength
 			cand.set = false
 		}
@@ -144,7 +144,7 @@ func (e *Encoder) EncodeWithReferences(input []byte) ([]byte, map[uint64][]byte)
 
 	// There's a hash we can declare, do it.
 	if cand.set {
-		output = e.encodeDeclaration(output, input, consumed, cand.offset, cand.hash)
+		output = e.encodeDeclaration(output, input, consumed, cand.offset, cand.hash, refs)
 		consumed = cand.offset + SegmentLength
 	}
 
@@ -160,7 +160,7 @@ func (e *Encoder) EncodeWithReferences(input []byte) ([]byte, map[uint64][]byte)
 // encodeDeclaration mirrors XCodecEncoder::encode_declaration: escape the
 // data preceding the declared segment, enter it into the cache and emit
 // an in-band <EXTRACT>, or, for out-of-band caches, a <REF>.
-func (e *Encoder) encodeDeclaration(output, input []byte, consumed, offset int, hash uint64) []byte {
+func (e *Encoder) encodeDeclaration(output, input []byte, consumed, offset int, hash uint64, refs map[uint64][]byte) []byte {
 	if offset > consumed {
 		output = appendEscaped(output, input[consumed:offset])
 	}
@@ -170,7 +170,7 @@ func (e *Encoder) encodeDeclaration(output, input []byte, consumed, offset int, 
 
 	if !e.stream {
 		// Declarations occur out-of-band.
-		return e.encodeReference(output, hash, segment, nil)
+		return e.encodeReference(output, hash, segment, refs)
 	}
 
 	// Declarations are extracted in-band.

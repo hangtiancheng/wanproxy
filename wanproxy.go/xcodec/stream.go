@@ -30,6 +30,10 @@ func NewEncodeReader(src io.Reader, cache Cache) *EncodeReader {
 }
 
 func (r *EncodeReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	emptyReads := 0
 	for len(r.pending) == 0 {
 		if r.err != nil {
 			return 0, r.err
@@ -51,13 +55,21 @@ func (r *EncodeReader) Read(p []byte) (int, error) {
 		}
 		n, rerr := r.src.Read(r.inbuf[len(r.inbuf):cap(r.inbuf)])
 		r.inbuf = r.inbuf[:len(r.inbuf)+n]
+		if n == 0 && rerr == nil {
+			emptyReads++
+			if emptyReads >= 100 {
+				rerr = io.ErrNoProgress
+			}
+		} else {
+			emptyReads = 0
+		}
 		switch rerr {
 		case nil:
 		case io.EOF:
 			r.srcEOF = true
 		default:
 			r.err = rerr
-			return 0, r.err
+			r.srcEOF = true
 		}
 
 		full := len(r.inbuf)
@@ -66,7 +78,7 @@ func (r *EncodeReader) Read(p []byte) (int, error) {
 		}
 		if full > 0 {
 			r.pending = r.enc.Encode(r.inbuf[:full])
-			r.inbuf = r.inbuf[full:]
+			r.inbuf = r.inbuf[:copy(r.inbuf, r.inbuf[full:])]
 		}
 	}
 	n := copy(p, r.pending)
@@ -85,6 +97,7 @@ type DecodeReader struct {
 	pending []byte
 	srcEOF  bool
 	err     error
+	buf     [65536]byte
 }
 
 // NewDecodeReader returns a decoding reader backed by cache.
@@ -93,6 +106,10 @@ func NewDecodeReader(src io.Reader, cache Cache) *DecodeReader {
 }
 
 func (r *DecodeReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	emptyReads := 0
 	for len(r.pending) == 0 {
 		if r.err != nil {
 			return 0, r.err
@@ -106,27 +123,32 @@ func (r *DecodeReader) Read(p []byte) (int, error) {
 			return 0, r.err
 		}
 
-		buf := make([]byte, 65536)
-		n, rerr := r.src.Read(buf)
+		n, rerr := r.src.Read(r.buf[:])
+		if n == 0 && rerr == nil {
+			emptyReads++
+			if emptyReads >= 100 {
+				rerr = io.ErrNoProgress
+			}
+		} else {
+			emptyReads = 0
+		}
 		if n > 0 {
-			res := r.dec.Decode(buf[:n])
+			res := r.dec.Decode(r.buf[:n])
+			r.pending = res.Output
 			if res.Err != nil {
 				r.err = res.Err
-				return 0, r.err
-			}
-			if len(res.Unknown) > 0 {
+			} else if len(res.Unknown) > 0 {
 				r.err = fmt.Errorf("xcodec: stream references %d unknown hashes", len(res.Unknown))
-				return 0, r.err
 			}
-			r.pending = res.Output
 		}
 		switch rerr {
 		case nil:
 		case io.EOF:
 			r.srcEOF = true
 		default:
-			r.err = rerr
-			return 0, r.err
+			if r.err == nil {
+				r.err = rerr
+			}
 		}
 	}
 	n := copy(p, r.pending)

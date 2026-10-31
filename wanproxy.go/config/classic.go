@@ -39,7 +39,6 @@ type ClassicParser struct {
 	// $object.member references.
 	fieldStrings map[string]string // key: object name + "." + member
 	cfg          *Config
-	disks        []*xcodec.Disk
 	log          *slog.Logger
 }
 
@@ -54,7 +53,12 @@ func NewClassicParser() *ClassicParser {
 }
 
 // Parse parses a whole wanproxy.conf document.
-func (p *ClassicParser) Parse(text string) (*Config, error) {
+func (p *ClassicParser) Parse(text string) (cfg *Config, err error) {
+	defer func() {
+		if err != nil {
+			_ = p.cfg.Close()
+		}
+	}()
 	for i, line := range strings.Split(text, "\n") {
 		tokens := tokenizeLine(line)
 		if len(tokens) == 0 {
@@ -314,7 +318,7 @@ func (p *ClassicParser) activateCache(obj *classicObject) error {
 		if err != nil {
 			return fmt.Errorf("could not open disk cache: %w", err)
 		}
-		p.disks = append(p.disks, disk)
+		p.cfg.resources = append(p.cfg.resources, disk)
 		obj.cache = disk.Local()
 
 	case "Pair":
@@ -418,6 +422,9 @@ func (p *ClassicParser) activateCodec(obj *classicObject) error {
 		}
 		spec.Cache = cache.cache
 	}
+	if err := spec.Validate(); err != nil {
+		return err
+	}
 
 	switch strings.ToLower(obj.str("track_statistics")) {
 	case "true", "yes":
@@ -510,10 +517,10 @@ func (p *ClassicParser) activateProxy(obj *classicObject) error {
 	if peer == nil || peer.address == nil {
 		return fmt.Errorf("proxy requires an activated peer")
 	}
-	if iface.address.Host == "" || iface.address.Port == "" {
+	if !iface.address.Valid() {
 		return fmt.Errorf("proxy interface endpoint is incomplete")
 	}
-	if peer.address.Host == "" || peer.address.Port == "" {
+	if !peer.address.Valid() {
 		return fmt.Errorf("proxy peer endpoint is incomplete")
 	}
 

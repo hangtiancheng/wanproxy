@@ -72,8 +72,7 @@ func (w *wireWriter) Write(p []byte) error {
 		}
 		return w.zw.Flush()
 	}
-	_, err := w.sink.Write(p)
-	return err
+	return writeFull(w.sink, p)
 }
 
 // Close flushes any deflate state and half-closes the socket write side,
@@ -85,10 +84,25 @@ func (w *wireWriter) Close() error {
 		return nil
 	}
 	w.writeClosed = true
+	var err error
 	if w.zw != nil {
-		_ = w.zw.Close()
+		err = w.zw.Close()
 	}
-	return closeWrite(w.conn)
+	return errors.Join(err, closeWrite(w.conn))
+}
+
+func writeFull(w io.Writer, p []byte) error {
+	for len(p) > 0 {
+		n, err := w.Write(p)
+		if err != nil {
+			return err
+		}
+		if n <= 0 || n > len(p) {
+			return io.ErrShortWrite
+		}
+		p = p[n:]
+	}
+	return nil
 }
 
 func closeWrite(conn StreamConn) error {

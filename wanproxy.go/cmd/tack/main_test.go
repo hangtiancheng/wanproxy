@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,44 @@ func tackRun(t *testing.T, args []string, stdin []byte) (string, string, error) 
 	var stdout, stderr bytes.Buffer
 	err := run(opts, files, bytes.NewReader(stdin), &stdout, &stderr)
 	return stdout.String(), stderr.String(), err
+}
+
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestTackReportsBufferedOutputErrors(t *testing.T) {
+	want := errors.New("output unavailable")
+	input := []byte("small output fails only on the final bufio flush")
+	encoded := xcodec.NewEncoder(xcodec.NewMemoryCache()).Encode(input)
+	for _, tc := range []struct {
+		action fileAction
+		input  []byte
+	}{
+		{actionCompress, input}, {actionDecompress, encoded},
+		{actionHashes, bytes.Repeat([]byte{1}, xcodec.SegmentLength)},
+	} {
+		err := run(options{action: tc.action}, nil, bytes.NewReader(tc.input), failingWriter{want}, io.Discard)
+		if !errors.Is(err, want) {
+			t.Fatalf("action %d hid write failure: %v", tc.action, err)
+		}
+	}
+}
+
+type shortReader struct{ src io.Reader }
+
+func (r shortReader) Read(p []byte) (int, error) { return r.src.Read(p[:min(len(p), 17)]) }
+
+func TestTackHashesSurviveShortReads(t *testing.T) {
+	input := bytes.Repeat([]byte{0x5a}, xcodec.SegmentLength*3+100)
+	var got bytes.Buffer
+	if err := hashes(shortReader{bytes.NewReader(input)}, &got, io.Discard, options{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	want, _, err := tackRun(t, []string{"-h"}, input)
+	if err != nil || got.String() != want {
+		t.Fatal("hashes depended on source Read boundaries")
+	}
 }
 
 func repetitivePayload() []byte {

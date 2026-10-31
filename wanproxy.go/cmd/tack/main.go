@@ -20,6 +20,7 @@ package main
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -70,7 +71,7 @@ func main() {
 	}
 }
 
-func run(opts options, files []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
+func run(opts options, files []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) (err error) {
 	if opts.action == actionNone {
 		return errUsage
 	}
@@ -97,7 +98,7 @@ func run(opts options, files []string, stdin io.Reader, stdout io.Writer, stderr
 	if err != nil {
 		return err
 	}
-	defer closeCache()
+	defer func() { err = errors.Join(err, closeCache()) }()
 
 	return processFiles(files, opts, cache, stdin, stdout, stderr)
 }
@@ -175,17 +176,17 @@ func usage() {
 	os.Exit(1)
 }
 
-func buildCache(opts options) (xcodec.Cache, func(), error) {
+func buildCache(opts options) (xcodec.Cache, func() error, error) {
 	switch {
 	case opts.nullCache:
-		return xcodec.NewNullCache(xcodec.CacheID{}), func() {}, nil
+		return xcodec.NewNullCache(xcodec.CacheID{}), func() error { return nil }, nil
 
 	case opts.fifo != "":
 		disk, err := xcodec.OpenDisk(opts.fifo, 0, common.Logger())
 		if err != nil {
 			return nil, nil, fmt.Errorf("could not open on-disk FIFO cache: %w", err)
 		}
-		return disk.Local(), func() { disk.Close() }, nil
+		return disk.Local(), disk.Close, nil
 
 	case opts.persist != "":
 		mode := os.O_RDWR | os.O_CREATE
@@ -202,10 +203,11 @@ func buildCache(opts options) (xcodec.Cache, func(), error) {
 			f.Close()
 			return nil, nil, err
 		}
-		return cache, func() { cache.Close(); f.Close() }, nil
+		cache.readOnly = opts.action == actionDecompress
+		return cache, func() error { return errors.Join(cache.Close(), f.Close()) }, nil
 
 	default:
-		return xcodec.NewMemoryCache(), func() {}, nil
+		return xcodec.NewMemoryCache(), func() error { return nil }, nil
 	}
 }
 
@@ -271,8 +273,7 @@ func processFiles(files []string, opts options, cache xcodec.Cache, stdin io.Rea
 		for _, file := range files {
 			f, err := os.Open(file)
 			if err != nil {
-				fmt.Fprintf(stderr, "could not open: %s: %v\n", file, err)
-				continue
+				return fmt.Errorf("could not open %s: %w", file, err)
 			}
 			err = processFile(file, f, out, stderr, opts, cache, t)
 			f.Close()
@@ -318,10 +319,10 @@ func processFile(name string, in io.Reader, out, stderr io.Writer, opts options,
 	return err
 }
 
-func compress(name string, in io.Reader, out, stderr io.Writer, cache xcodec.Cache, opts options, t *timer) error {
+func compress(name string, in io.Reader, out, stderr io.Writer, cache xcodec.Cache, opts options, t *timer) (err error) {
 	encoder := xcodec.NewEncoder(cache)
 	w := bufio.NewWriter(out)
-	defer w.Flush()
+	defer func() { err = errors.Join(err, w.Flush()) }()
 
 	var inbytes, outbytes uint64
 	buf := make([]byte, 65536)
@@ -359,10 +360,10 @@ func compress(name string, in io.Reader, out, stderr io.Writer, cache xcodec.Cac
 	return nil
 }
 
-func decompress(name string, in io.Reader, out, stderr io.Writer, cache xcodec.Cache, opts options, t *timer) error {
+func decompress(name string, in io.Reader, out, stderr io.Writer, cache xcodec.Cache, opts options, t *timer) (err error) {
 	decoder := xcodec.NewDecoder(cache)
 	w := bufio.NewWriter(out)
-	defer w.Flush()
+	defer func() { err = errors.Join(err, w.Flush()) }()
 
 	var inbytes, outbytes uint64
 	buf := make([]byte, 65536)
@@ -409,53 +410,33 @@ func decompress(name string, in io.Reader, out, stderr io.Writer, cache xcodec.C
 	return nil
 }
 
-func hashes(in io.Reader, out, stderr io.Writer, opts options, t *timer) error {
+func hashes(in io.Reader, out, stderr io.Writer, opts options, t *timer) (err error) {
 	w := bufio.NewWriter(out)
-	defer w.Flush()
-
-	buf := make([]byte, 65536)
-	var be [8]byte
+	defer func() { err = errors.Join(err, w.Flush()) }()
+	var segment [xcodec.SegmentLength]byte
+	var digest [8]byte
 	for {
-		n, err := readChunk(in, buf)
-		if n > 0 {
-			if t != nil {
-				t.begin()
-			}
-			h := xcodec.NewHash()
-			fed := 0
-			for i := 0; i < n; i++ {
-				h.Add(buf[i])
-				fed++
-				if fed == xcodec.SegmentLength {
-					binary.BigEndian.PutUint64(be[:], h.Mix())
-					w.Write(be[:])
-					h.Reset()
-					fed = 0
-				}
-			}
-			if t != nil {
-				t.stop()
-			}
+		_, readErr := io.ReadFull(in, segment[:])
+		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+			return nil // Only complete segments have an XCodec hash.
 		}
-		if err == io.EOF {
-			break
+		if readErr != nil {
+			return fmt.Errorf("read failed: %w", readErr)
 		}
-		if err != nil {
-			return fmt.Errorf("read failed: %w", err)
+		if t != nil {
+			t.begin()
+		}
+		binary.BigEndian.PutUint64(digest[:], xcodec.HashSegment(segment[:]))
+		if t != nil {
+			t.stop()
+		}
+		if _, err := w.Write(digest[:]); err != nil {
+			return fmt.Errorf("write failed: %w", err)
 		}
 	}
-	return nil
 }
 
-// readChunk reads at least one byte unless the stream is at EOF,
-// mirroring the C++ fill() behaviour of returning whole reads.
-func readChunk(r io.Reader, buf []byte) (int, error) {
-	n, err := r.Read(buf)
-	if n > 0 {
-		return n, nil
-	}
-	return 0, err
-}
+func readChunk(r io.Reader, buf []byte) (int, error) { return r.Read(buf) }
 
 func printRatio(name string, inbytes, outbytes uint64, stderr io.Writer) {
 	fmt.Fprintf(stderr, "%s: %d uncompressed bytes, %d compressed bytes.\n", name, inbytes, outbytes)
@@ -476,9 +457,10 @@ func printRatio(name string, inbytes, outbytes uint64, stderr io.Writer) {
 // warmed from a file of concatenated raw segments, appending newly
 // entered segments and flushing them on Close.
 type persistentCache struct {
-	mem     *xcodec.MemoryCache
-	f       *os.File
-	newData []byte
+	mem      *xcodec.MemoryCache
+	f        *os.File
+	newData  []byte
+	readOnly bool
 }
 
 func newPersistentCache(f *os.File) (*persistentCache, error) {
@@ -501,13 +483,14 @@ func newPersistentCache(f *os.File) (*persistentCache, error) {
 	return c, nil
 }
 
-func (c *persistentCache) Close() {
+func (c *persistentCache) Close() error {
 	if len(c.newData) > 0 && c.f != nil {
 		if _, err := c.f.Write(c.newData); err != nil {
-			fmt.Fprintf(os.Stderr, "could not flush persistent cache: %v\n", err)
+			return fmt.Errorf("could not flush persistent cache: %w", err)
 		}
 		c.newData = nil
 	}
+	return nil
 }
 
 func (c *persistentCache) Lookup(hash uint64) []byte     { return c.mem.Lookup(hash) }
@@ -522,9 +505,11 @@ func (c *persistentCache) ID() xcodec.CacheID { return c.mem.ID() }
 
 func (c *persistentCache) Enter(hash uint64, segment []byte) {
 	c.mem.Enter(hash, segment)
-	c.newData = append(c.newData, segment...)
+	if !c.readOnly {
+		c.newData = append(c.newData, segment...)
+	}
 }
 
 func (c *persistentCache) Replace(hash uint64, segment []byte) {
-	panic("tack: replace on persistent cache")
+	c.Enter(hash, segment)
 }

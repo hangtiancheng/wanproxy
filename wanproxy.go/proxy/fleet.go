@@ -46,15 +46,25 @@ func (f *Fleet) Start() error {
 	socks := append([]*SocksListener(nil), f.socks...)
 	f.mu.Unlock()
 
+	var started []func() error
+	rollback := func() {
+		for i := len(started) - 1; i >= 0; i-- {
+			_ = started[i]()
+		}
+	}
 	for _, l := range tcp {
 		if err := l.Start(); err != nil {
+			rollback()
 			return err
 		}
+		started = append(started, l.Stop)
 	}
 	for _, l := range socks {
 		if err := l.Start(); err != nil {
+			rollback()
 			return err
 		}
+		started = append(started, l.Stop)
 	}
 	return nil
 }

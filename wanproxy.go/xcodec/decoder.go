@@ -19,9 +19,10 @@ import (
 // been entered into the cache, a subsequent Decode call (possibly with an
 // empty chunk) resumes decoding exactly where it stopped.
 type Decoder struct {
-	cache  Cache
-	window *Window
-	buf    []byte // encoded bytes not yet consumed
+	cache       Cache
+	window      *Window
+	buf         []byte // encoded bytes not yet consumed
+	outputLimit int    // zero means unlimited; sessions bound expansion per Receive
 }
 
 // NewDecoder returns a decoder backed by the given cache.
@@ -59,11 +60,17 @@ func (d *Decoder) Decode(chunk []byte) DecodeResult {
 		// Everything before the next magic byte is literal data.
 		off := bytes.IndexByte(d.buf, Magic)
 		if off < 0 {
+			if d.outputLimit > 0 && len(d.buf) > d.outputLimit-len(output) {
+				return DecodeResult{Output: output, Err: ErrSessionLimit}
+			}
 			output = append(output, d.buf...)
 			d.buf = d.buf[:0]
 			break
 		}
 		if off > 0 {
+			if d.outputLimit > 0 && off > d.outputLimit-len(output) {
+				return DecodeResult{Output: output, Err: ErrSessionLimit}
+			}
 			output = append(output, d.buf[:off]...)
 			d.buf = d.buf[off:]
 		}
@@ -74,6 +81,13 @@ func (d *Decoder) Decode(chunk []byte) DecodeResult {
 		}
 
 		op := d.buf[1]
+		expansion := 1
+		if op == OpExtract || op == OpRef || op == OpBackref {
+			expansion = SegmentLength
+		}
+		if d.outputLimit > 0 && expansion > d.outputLimit-len(output) {
+			return DecodeResult{Output: output, Err: ErrSessionLimit}
+		}
 		switch op {
 		case OpEscape:
 			output = append(output, Magic)
@@ -112,7 +126,7 @@ func (d *Decoder) Decode(chunk []byte) DecodeResult {
 				// Skim through the rest of the stream and
 				// identify any other unresolvable references
 				// so the caller can ask for them all at once.
-				unknown := d.skim()
+				unknown := d.skim(hash)
 				return DecodeResult{
 					Output:   output,
 					Consumed: before + len(chunk) - len(d.buf),
@@ -177,9 +191,12 @@ func (d *Decoder) Finish() error {
 // stream without consuming it and collect every referenced hash that is
 // neither in the cache nor declared by an <EXTRACT> earlier in the
 // remainder.
-func (d *Decoder) skim() []uint64 {
+func (d *Decoder) skim(missing uint64) []uint64 {
 	defined := make(map[uint64]bool)
-	unknown := make(map[uint64]bool)
+	// A shared cache can change between Lookup and this scan. Preserve
+	// the reference that actually blocked us so a concurrent insertion
+	// cannot leave the decoder stalled without producing an ASK.
+	unknown := map[uint64]bool{missing: true}
 
 	buf := d.buf
 	for len(buf) > 0 {

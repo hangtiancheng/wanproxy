@@ -1,12 +1,11 @@
 package proxy
 
 import (
+	"context"
 	"crypto/rsa"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/hangtiancheng/wanproxy/wanproxy.go/pipeline"
@@ -36,82 +35,47 @@ type Listener struct {
 	PeerCodec  *pipeline.CodecSpec
 	SSH        *SSHSettings
 	Log        *slog.Logger
-	Dial       func(network, addr string) (net.Conn, error) // test hook
+	// DialContext overrides outbound dialing. Stop cancels its context.
+	DialContext func(context.Context, string, string) (net.Conn, error)
+	// Dial is a legacy test hook; it must return before Stop can finish.
+	// Prefer DialContext for cancellable dialing.
+	Dial func(network, addr string) (net.Conn, error)
 
-	mu                  sync.Mutex
-	listener            net.Listener
-	acceptedConnections int64
-	active              map[net.Conn]struct{}
-	stopped             bool
+	listenerState
 }
 
 // Start begins listening and accepting connections.
 func (l *Listener) Start() error {
-	if l.Log == nil {
-		l.Log = slog.Default()
+	if err := l.IfaceCodec.Validate(); err != nil {
+		return err
 	}
-	if l.Dial == nil {
-		var d net.Dialer
-		l.Dial = d.Dial
+	if err := l.PeerCodec.Validate(); err != nil {
+		return err
 	}
 	if !l.Iface.Valid() {
 		return fmt.Errorf("proxy %q: interface endpoint is incomplete", l.Name)
 	}
 	if !l.Peer.Valid() {
-		return fmt.Errorf("proxy %q: peer endpoint is incomplete", l.Peer)
+		return fmt.Errorf("proxy %q: peer endpoint is incomplete", l.Name)
 	}
-
-	ln, err := net.Listen(l.Iface.Network(), l.Iface.Addr())
-	if err != nil {
-		return fmt.Errorf("proxy %q: %w", l.Name, err)
+	if l.Log == nil {
+		l.Log = slog.Default()
 	}
-
-	l.mu.Lock()
-	if l.stopped {
-		l.mu.Unlock()
-		ln.Close()
-		return errors.New("proxy: listener already stopped")
-	}
-	l.listener = ln
-	l.active = make(map[net.Conn]struct{})
-	l.mu.Unlock()
-
-	go l.acceptLoop()
-	return nil
-}
-
-func (l *Listener) acceptLoop() {
-	for {
-		conn, err := l.listener.Accept()
-		if err != nil {
-			l.mu.Lock()
-			stopped := l.stopped
-			l.mu.Unlock()
-			if !stopped {
-				l.Log.Error("accept failed", "proxy", l.Name, "error", err)
-			}
-			return
-		}
-		l.mu.Lock()
-		l.acceptedConnections++
-		l.active[conn] = struct{}{}
-		l.mu.Unlock()
-		go l.handle(conn)
-	}
+	return l.start(l.Iface, l.Log, l.Name, l.handle)
 }
 
 func (l *Listener) handle(client net.Conn) {
 	defer l.drop(client)
 
-	upstream, err := l.Dial(l.Peer.Network(), l.Peer.Addr())
+	upstream, err := dialPeer(l.ctx, l.DialContext, l.Dial, l.Peer.Network(), l.Peer.Addr())
 	if err != nil {
 		l.Log.Error("could not connect to peer", "proxy", l.Name, "error", err)
 		client.Close()
 		return
 	}
-	l.mu.Lock()
-	l.active[upstream] = struct{}{}
-	l.mu.Unlock()
+	if !l.track(upstream) {
+		return
+	}
 	defer l.drop(upstream)
 
 	var clientStream, upstreamStream StreamConn = client, upstream
@@ -166,16 +130,25 @@ func (l *Listener) handshakeSSH(client, upstream net.Conn) (StreamConn, StreamCo
 		Log:    l.Log,
 	})
 
-	serverErr := make(chan error, 1)
-	clientErr := make(chan error, 1)
-	go func() { serverErr <- serverTransport.Handshake() }()
-	go func() { clientErr <- clientTransport.Handshake() }()
-
-	if err := <-serverErr; err != nil {
-		return nil, nil, fmt.Errorf("interface side: %w", err)
+	type handshakeResult struct {
+		side string
+		err  error
 	}
-	if err := <-clientErr; err != nil {
-		return nil, nil, fmt.Errorf("peer side: %w", err)
+	results := make(chan handshakeResult, 2)
+	go func() { results <- handshakeResult{"interface", serverTransport.Handshake()} }()
+	go func() { results <- handshakeResult{"peer", clientTransport.Handshake()} }()
+	var firstErr error
+	for range 2 {
+		res := <-results
+		if res.err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("%s side: %w", res.side, res.err)
+			// Interrupt the other handshake and join it before returning.
+			client.Close()
+			upstream.Close()
+		}
+	}
+	if firstErr != nil {
+		return nil, nil, firstErr
 	}
 
 	var noDeadline time.Time
@@ -190,61 +163,4 @@ func (l *Listener) handshakeSSH(client, upstream net.Conn) (StreamConn, StreamCo
 
 func codecActive(spec *pipeline.CodecSpec) bool {
 	return spec != nil && spec.Mode != pipeline.ModeNone
-}
-
-func (l *Listener) drop(conn net.Conn) {
-	l.mu.Lock()
-	delete(l.active, conn)
-	l.mu.Unlock()
-}
-
-// Stop closes the listener and all active connections.
-func (l *Listener) Stop() error {
-	l.mu.Lock()
-	l.stopped = true
-	ln := l.listener
-	conns := make([]net.Conn, 0, len(l.active))
-	for conn := range l.active {
-		conns = append(conns, conn)
-	}
-	l.mu.Unlock()
-
-	for _, conn := range conns {
-		conn.Close()
-	}
-	if ln != nil {
-		return ln.Close()
-	}
-	return nil
-}
-
-// Listening reports whether the listener is active.
-func (l *Listener) Listening() bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.listener != nil && !l.stopped
-}
-
-// Address returns the bound address, if listening.
-func (l *Listener) Address() *BoundAddress {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.stopped {
-		return nil
-	}
-	return boundAddressOf(l.listener)
-}
-
-// AcceptedConnections returns the number of accepted client connections.
-func (l *Listener) AcceptedConnections() int64 {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.acceptedConnections
-}
-
-// ActiveSockets returns the number of tracked sockets.
-func (l *Listener) ActiveSockets() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.active)
 }

@@ -7,6 +7,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -37,7 +39,7 @@ type fleetSource struct {
 func (f *fleetSource) Objects() []config.Object  { return f.objects }
 func (f *fleetSource) Status() proxy.FleetStatus { return f.fleet.Status() }
 
-func run() error {
+func run() (err error) {
 	var (
 		configFile = flag.String("c", "", "configuration file (wanproxy.conf or JSON)")
 		quiet      = flag.Bool("q", false, "log errors only")
@@ -82,6 +84,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("could not configure proxies: %w", err)
 	}
+	defer func() { err = errors.Join(err, cfg.Close()) }()
 
 	if !*verbose && !*quiet {
 		if err := common.Mask(".?", cfg.LogLevel); err != nil {
@@ -116,12 +119,12 @@ func run() error {
 	if err := fleet.Start(); err != nil {
 		return err
 	}
+	defer func() { err = errors.Join(err, fleet.Stop()) }()
 
 	var mon *monitor.Server
 	if cfg.Monitor != nil {
 		mon = monitor.NewServer(cfg.Monitor.Interface, &fleetSource{objects: cfg.Objects, fleet: fleet})
 		if err := mon.Start(); err != nil {
-			fleet.Stop()
 			return err
 		}
 	}
@@ -136,13 +139,13 @@ func run() error {
 	}
 
 	// Wait for a signal, then shut everything down.
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	<-sig
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
 
 	log.Info("shutting down")
 	if mon != nil {
-		mon.Stop()
+		err = mon.Stop()
 	}
-	return fleet.Stop()
+	return err
 }

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"sync"
@@ -53,10 +54,18 @@ type Relay struct {
 	log *slog.Logger
 
 	closeOnce sync.Once
+	ctx       context.Context
+	cancel    context.CancelCauseFunc
 }
 
 // NewRelay builds a relay for one proxied connection.
 func NewRelay(client, upstream StreamConn, ifaceCodec, peerCodec *pipeline.CodecSpec, log *slog.Logger) (*Relay, error) {
+	if err := ifaceCodec.Validate(); err != nil {
+		return nil, err
+	}
+	if err := peerCodec.Validate(); err != nil {
+		return nil, err
+	}
 	if log == nil {
 		log = slog.Default()
 	}
@@ -95,288 +104,190 @@ func compressorLevelOf(spec *pipeline.CodecSpec) int {
 }
 
 // Run relays until both directions finish, then closes both connections.
-func (r *Relay) Run() {
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		r.clientToUpstream()
-	}()
-	go func() {
-		defer wg.Done()
-		r.upstreamToClient()
-	}()
-	wg.Wait()
-	r.client.Close()
-	r.upstream.Close()
+func (r *Relay) Run() { _ = r.RunContext(context.Background()) }
+
+// RunContext relays with cancellation and returns the first failure. A relay
+// may only be run once. Closing the sockets interrupts blocked network I/O;
+// cancelling the context also wakes encoders waiting for ADVANCE.
+func (r *Relay) RunContext(ctx context.Context) error {
+	r.ctx, r.cancel = context.WithCancelCause(ctx)
+	defer r.cancel(nil)
+	stop := context.AfterFunc(r.ctx, r.close)
+	defer stop()
+	var workers sync.WaitGroup
+	if r.ifaceCodec == nil && r.peerCodec == nil {
+		workers.Go(func() { r.copyPlain(r.upstream, r.client) })
+		workers.Go(func() { r.copyPlain(r.client, r.upstream) })
+		workers.Wait()
+	} else {
+		controlsI, controlsP := newFlowQueue(false), newFlowQueue(false)
+		var writers sync.WaitGroup
+		writers.Go(func() { r.writeControls(controlsI, r.clientWire) })
+		writers.Go(func() { r.writeControls(controlsP, r.upstreamWire) })
+		toUpstream, toClient := newFlowQueue(true), newFlowQueue(true)
+		workers.Go(func() {
+			r.readSource(r.client, r.ifaceCodec, r.sessionI, controlsI, toUpstream, countIncomingToCodec(r.ifaceCodec))
+		})
+		workers.Go(func() {
+			r.readSource(r.upstream, r.peerCodec, r.sessionP, controlsP, toClient, countOutgoingToCodec(r.peerCodec))
+		})
+		workers.Go(func() { r.forward(toUpstream, r.sessionP, r.upstreamWire, controlsI, r.countBoundarySend) })
+		workers.Go(func() { r.forward(toClient, r.sessionI, r.clientWire, controlsP, r.countBoundaryReceive) })
+		workers.Wait()
+		controlsI.close()
+		controlsP.close()
+		writers.Wait()
+	}
+	r.close()
+	return context.Cause(r.ctx)
 }
 
-// abort tears down the whole relay, mirroring the C++ splice error path.
-func (r *Relay) abort(err error) {
-	r.log.Debug("relay aborted", "error", err)
+func (r *Relay) close() {
 	r.closeOnce.Do(func() {
 		r.client.Close()
 		r.upstream.Close()
 	})
 }
 
-// clientToUpstream pumps the interface→peer direction.
-func (r *Relay) clientToUpstream() {
-	src, cleanup, err := r.relaySource(r.client, r.ifaceCodec, countIncomingToCodec(r.ifaceCodec))
+func (r *Relay) abort(err error) {
+	r.log.Debug("relay aborted", "error", err)
+	r.cancel(err)
+	r.close()
+}
+
+// Let net.TCPConn and io.Copy use the platform's optimized copy path for
+// ordinary forwarding. Only transformed streams need the codec pump.
+func (r *Relay) copyPlain(dst, src StreamConn) {
+	if _, err := io.Copy(dst, src); err != nil {
+		r.abort(err)
+		return
+	}
+	if err := closeWrite(dst); err != nil {
+		r.abort(err)
+	}
+}
+
+// readSource owns a socket's read side and never waits for a socket write.
+// This is essential: ASK/LEARN/ADVANCE share the wire with application data.
+func (r *Relay) readSource(conn StreamConn, spec *pipeline.CodecSpec, session *xcodec.Session,
+	controls, output *flowQueue, count func(int)) {
+	defer output.close()
+	src, cleanup, err := r.relaySource(conn, spec, count)
 	if err != nil {
 		r.abort(err)
 		return
 	}
 	defer cleanup()
-
-	buf := make([]byte, relayReadSize)
-	sessionEOF := false
-	failed := false
-	for {
-		n, rerr := src.Read(buf)
-		if n > 0 {
-			data := buf[:n]
-
-			if r.sessionI != nil {
-				res, serr := r.sessionI.Receive(data)
-				if serr != nil {
-					r.abort(serr)
-					failed = true
-					break
-				}
-				if len(res.Responses) > 0 {
-					if werr := r.clientWire.Write(res.Responses); werr != nil {
-						r.abort(werr)
-						failed = true
-						break
-					}
-				}
-				if res.Done {
-					// Both directions of the interface session
-					// finished; close the wire toward the client.
-					_ = r.clientWire.Close()
-				}
-				data = res.Output
-				if res.OutputEOF {
-					sessionEOF = true
-				}
-			}
-
-			r.countBoundarySend(len(data))
-			if len(data) > 0 && !r.forwardToUpstream(data) {
-				failed = true
-				break
-			}
-			if sessionEOF {
-				break
-			}
-		}
-		if rerr == io.EOF {
-			break
-		}
-		if rerr != nil {
-			r.abort(rerr)
-			failed = true
-			break
-		}
-	}
-	if failed {
-		return
-	}
-
-	// The client closed without ending the session stream: an error
-	// only when data is still outstanding, exactly like the C++
-	// decoder_consume empty-buffer path.
-	if r.sessionI != nil && !sessionEOF && r.sessionI.HasPending() {
-		r.abort(io.ErrUnexpectedEOF)
-		return
-	}
-
-	r.finishTowardUpstream()
-	r.drain(src, r.sessionI, r.clientWire)
-}
-
-// upstreamToClient pumps the peer→interface direction.
-func (r *Relay) upstreamToClient() {
-	src, cleanup, err := r.relaySource(r.upstream, r.peerCodec, countOutgoingToCodec(r.peerCodec))
-	if err != nil {
-		r.abort(err)
-		return
-	}
-	defer cleanup()
-
-	buf := make([]byte, relayReadSize)
-	sessionEOF := false
-	failed := false
-	for {
-		n, rerr := src.Read(buf)
-		if n > 0 {
-			data := buf[:n]
-
-			if r.sessionP != nil {
-				res, serr := r.sessionP.Receive(data)
-				if serr != nil {
-					r.abort(serr)
-					failed = true
-					break
-				}
-				if len(res.Responses) > 0 {
-					if werr := r.upstreamWire.Write(res.Responses); werr != nil {
-						r.abort(werr)
-						failed = true
-						break
-					}
-				}
-				if res.Done {
-					// Both directions of the peer session
-					// finished; close the wire toward upstream.
-					_ = r.upstreamWire.Close()
-				}
-				data = res.Output
-				if res.OutputEOF {
-					sessionEOF = true
-				}
-			}
-
-			r.countBoundaryReceive(len(data))
-			if len(data) > 0 && !r.forwardToClient(data) {
-				failed = true
-				break
-			}
-			if sessionEOF {
-				break
-			}
-		}
-		if rerr == io.EOF {
-			break
-		}
-		if rerr != nil {
-			r.abort(rerr)
-			failed = true
-			break
-		}
-	}
-	if failed {
-		return
-	}
-
-	if r.sessionP != nil && !sessionEOF && r.sessionP.HasPending() {
-		r.abort(io.ErrUnexpectedEOF)
-		return
-	}
-
-	r.finishTowardClient()
-	r.drain(src, r.sessionP, r.upstreamWire)
-}
-
-// forwardToUpstream sends plaintext toward the peer, encoding through
-// the peer session when present.
-func (r *Relay) forwardToUpstream(data []byte) bool {
-	if r.sessionP != nil {
-		out, err := r.sessionP.EncodeData(data)
-		if err != nil {
-			r.abort(err)
-			return false
-		}
-		if err := r.upstreamWire.Write(out); err != nil {
-			r.abort(err)
-			return false
-		}
-		return true
-	}
-	if err := r.upstreamWire.Write(data); err != nil {
-		r.abort(err)
-		return false
-	}
-	return true
-}
-
-// forwardToClient sends plaintext toward the client, encoding through
-// the interface session when present.
-func (r *Relay) forwardToClient(data []byte) bool {
-	if r.sessionI != nil {
-		out, err := r.sessionI.EncodeData(data)
-		if err != nil {
-			r.abort(err)
-			return false
-		}
-		if err := r.clientWire.Write(out); err != nil {
-			r.abort(err)
-			return false
-		}
-		return true
-	}
-	if err := r.clientWire.Write(data); err != nil {
-		r.abort(err)
-		return false
-	}
-	return true
-}
-
-// drain keeps consuming the source after the logical end of stream so
-// that crossed control frames (<EOS_ACK>, <ADVANCE>) are processed, the
-// session can complete and close its wire, and the socket is fully
-// drained before the relay closes it.
-func (r *Relay) drain(src io.Reader, session *xcodec.Session, wire *wireWriter) {
-	if session == nil {
-		return
-	}
 	buf := make([]byte, relayReadSize)
 	for {
-		n, err := src.Read(buf)
+		n, readErr := src.Read(buf)
 		if n > 0 {
-			res, rerr := session.Receive(buf[:n])
-			if rerr != nil {
-				r.log.Debug("drain session error", "error", rerr)
+			msg := delivery{data: buf[:n]}
+			if session != nil {
+				res, err := session.Receive(buf[:n])
+				if err != nil {
+					r.abort(err)
+					return
+				}
+				immediate, delayed := splitResponses(res.Responses)
+				if err := controls.push(delivery{data: immediate}); err != nil {
+					r.abort(err)
+					return
+				}
+				msg = delivery{data: res.Output, responses: delayed, eof: res.OutputEOF, done: res.Done}
+			}
+			var err error
+			if session == nil {
+				err = output.pushContext(r.ctx, msg)
+			} else {
+				err = output.push(msg)
+			}
+			if err != nil {
+				r.abort(err)
 				return
 			}
-			if len(res.Responses) > 0 {
-				if werr := wire.Write(res.Responses); werr != nil {
-					r.log.Debug("drain response write failed", "error", werr)
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				if session != nil {
+					readErr = session.FinishReceive()
+				} else {
+					readErr = output.push(delivery{eof: true})
 				}
 			}
-			if res.Done {
-				_ = wire.Close()
+			if readErr != nil {
+				r.abort(readErr)
+			}
+			return
+		}
+	}
+}
+
+// forward owns one application direction. ADVANCE and EOS_ACK follow the
+// data they acknowledge; the independent reader can keep answering ASK.
+func (r *Relay) forward(input *flowQueue, encode *xcodec.Session, wire *wireWriter,
+	controls *flowQueue, count func(int)) {
+	for {
+		msg, ok := input.pop(r.ctx)
+		if !ok {
+			return
+		}
+		count(len(msg.data))
+		if len(msg.data) > 0 {
+			data := msg.data
+			if encode != nil {
+				var err error
+				data, err = encode.EncodeDataContext(r.ctx, data)
+				if err != nil {
+					r.abort(err)
+					return
+				}
+			}
+			if err := wire.Write(data); err != nil {
+				r.abort(err)
+				return
 			}
 		}
-		if err != nil {
+		if msg.eof {
+			var err error
+			if encode != nil {
+				var eos []byte
+				eos, err = encode.CloseWrite()
+				if err == nil {
+					err = wire.Write(eos)
+				}
+			} else {
+				err = wire.Close()
+			}
+			if err != nil {
+				r.abort(err)
+				return
+			}
+		}
+		if err := controls.push(delivery{data: msg.responses, done: msg.done}); err != nil {
+			r.abort(err)
 			return
 		}
 	}
 }
 
-// finishTowardUpstream ends the client→upstream direction: send <EOS>
-// through the peer session when present, otherwise flush and half-close
-// the upstream write side.
-func (r *Relay) finishTowardUpstream() {
-	if r.sessionP != nil {
-		eos, err := r.sessionP.CloseWrite()
-		if err != nil {
-			r.log.Debug("peer session EOS already sent", "error", err)
+func (r *Relay) writeControls(input *flowQueue, wire *wireWriter) {
+	for {
+		msg, ok := input.pop(r.ctx)
+		if !ok {
 			return
 		}
-		if werr := r.upstreamWire.Write(eos); werr != nil {
-			r.log.Debug("could not send peer session EOS", "error", werr)
-		}
-		return
-	}
-	_ = r.upstreamWire.Close()
-}
-
-// finishTowardClient ends the upstream→client direction.
-func (r *Relay) finishTowardClient() {
-	if r.sessionI != nil {
-		eos, err := r.sessionI.CloseWrite()
-		if err != nil {
-			r.log.Debug("interface session EOS already sent", "error", err)
+		if err := wire.Write(msg.data); err != nil {
+			r.abort(err)
 			return
 		}
-		if werr := r.clientWire.Write(eos); werr != nil {
-			r.log.Debug("could not send interface session EOS", "error", werr)
+		if msg.done {
+			if err := wire.Close(); err != nil {
+				r.abort(err)
+				return
+			}
 		}
-		return
 	}
-	_ = r.clientWire.Close()
 }
 
 // relaySource wraps a connection for reading, counting raw bytes and
