@@ -1,0 +1,19 @@
+{
+  "monitor": {
+    "listen": { "host": "127.0.0.1", "port": 8403 }
+  },
+  "proxies": [
+    {
+      "name": "client-side",
+      "listen": { "host": "127.0.0.1", "port": 8330 },
+      "upstream": { "host": "127.0.0.1", "port": 8331 },
+      "codec": { "mode": "zlib+xcodec", "role": "incoming", "compressorLevel": 6 }
+    },
+    {
+      "name": "server-side",
+      "listen": { "host": "127.0.0.1", "port": 8331 },
+      "upstream": { "host": "127.0.0.1", "port": 8332 },
+      "codec": { "mode": "zlib+xcodec", "role": "outgoing", "compressorLevel": 6 }
+    }
+  ]
+}

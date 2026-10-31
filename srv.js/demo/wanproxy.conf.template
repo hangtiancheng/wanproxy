@@ -1,0 +1,242 @@
+# wanproxy.js demo topology, rendered by srv.js at startup ({{...}} tokens
+# are replaced with absolute paths / ports).  Every scenario listens on its
+# own port and forwards to the SRV origin on {{SRV_PORT}}.
+#
+#   browser/bench ──> :8310 passthrough ──────────────────────────> SRV :{{SRV_PORT}}
+#                   > :8311 zlib-a ══zlib══> :8351 zlib-b ────────> SRV
+#                   > :8312 xcodec-a ═XCodec═> :8352 xcodec-b ────> SRV
+#                   > :8320 wan-a ═XCodec+zlib═> :8321 wan-b ─────> SRV
+#                   > :8330 SOCKS5 ───────────────────────────────> SRV
+#   monitor JSON/HTML on :{{MONITOR_PORT}}
+#
+# The SSH-to-SSH chain from the Go demo is omitted: the wanproxy.js runtime
+# does not yet splice a codec pipeline through an SSH-SSH proxy.
+
+create log-mask catch-all
+set catch-all.regex "^/"
+set catch-all.mask INFO
+activate catch-all
+
+# Cache hierarchy: 256MB memory in front of a 256MB XCDFS volume.
+create cache memorycache0
+set memorycache0.type Memory
+set memorycache0.size 256MB
+activate memorycache0
+
+create cache diskcache0
+set diskcache0.type Disk
+set diskcache0.size 256MB
+set diskcache0.path "{{XCACHE_PATH}}"
+activate diskcache0
+
+create cache cache0
+set cache0.type Pair
+set cache0.primary memorycache0
+set cache0.secondary diskcache0
+activate cache0
+
+# Codecs.
+create codec wan-a
+set wan-a.codec XCodec
+set wan-a.cache cache0
+set wan-a.compressor zlib
+set wan-a.compressor_level 6
+set wan-a.track_statistics true
+activate wan-a
+
+create codec wan-b
+set wan-b.codec XCodec
+set wan-b.cache cache0
+set wan-b.compressor zlib
+set wan-b.compressor_level 6
+set wan-b.track_statistics true
+activate wan-b
+
+create codec zlib-only
+set zlib-only.codec None
+set zlib-only.compressor zlib
+set zlib-only.compressor_level 6
+set zlib-only.track_statistics true
+activate zlib-only
+
+create codec xcodec-only
+set xcodec-only.codec XCodec
+set xcodec-only.cache cache0
+set xcodec-only.track_statistics true
+activate xcodec-only
+
+create codec zlib-b
+set zlib-b.codec None
+set zlib-b.compressor zlib
+set zlib-b.compressor_level 6
+set zlib-b.track_statistics true
+activate zlib-b
+
+create codec xcodec-b
+set xcodec-b.codec XCodec
+set xcodec-b.cache cache0
+set xcodec-b.track_statistics true
+activate xcodec-b
+
+# Interfaces.
+create interface srv
+set srv.family IP
+set srv.host "127.0.0.1"
+set srv.port "{{SRV_PORT}}"
+activate srv
+
+create interface if-passthrough
+set if-passthrough.family IP
+set if-passthrough.host "127.0.0.1"
+set if-passthrough.port "8310"
+activate if-passthrough
+
+create interface if-zlib
+set if-zlib.family IP
+set if-zlib.host "127.0.0.1"
+set if-zlib.port "8311"
+activate if-zlib
+
+create interface if-xcodec
+set if-xcodec.family IP
+set if-xcodec.host "127.0.0.1"
+set if-xcodec.port "8312"
+activate if-xcodec
+
+create interface if-wan-a
+set if-wan-a.family IP
+set if-wan-a.host "127.0.0.1"
+set if-wan-a.port "8320"
+activate if-wan-a
+
+create interface if-wan-b
+set if-wan-b.family IP
+set if-wan-b.host "127.0.0.1"
+set if-wan-b.port "8321"
+activate if-wan-b
+
+create interface if-zlib-b
+set if-zlib-b.family IP
+set if-zlib-b.host "127.0.0.1"
+set if-zlib-b.port "8351"
+activate if-zlib-b
+
+create interface if-xcodec-b
+set if-xcodec-b.family IP
+set if-xcodec-b.host "127.0.0.1"
+set if-xcodec-b.port "8352"
+activate if-xcodec-b
+
+create interface if-socks
+set if-socks.family IP
+set if-socks.host "127.0.0.1"
+set if-socks.port "8330"
+activate if-socks
+
+create interface if-monitor
+set if-monitor.family IP
+set if-monitor.host "127.0.0.1"
+set if-monitor.port "{{MONITOR_PORT}}"
+activate if-monitor
+
+# Peers.
+create peer peer-srv-1
+set peer-srv-1.family $srv.family
+set peer-srv-1.host $srv.host
+set peer-srv-1.port $srv.port
+activate peer-srv-1
+
+create peer peer-srv-2
+set peer-srv-2.family $srv.family
+set peer-srv-2.host $srv.host
+set peer-srv-2.port $srv.port
+activate peer-srv-2
+
+create peer peer-srv-3
+set peer-srv-3.family $srv.family
+set peer-srv-3.host $srv.host
+set peer-srv-3.port $srv.port
+activate peer-srv-3
+
+create peer peer-zlib-b
+set peer-zlib-b.family IP
+set peer-zlib-b.host "127.0.0.1"
+set peer-zlib-b.port "8351"
+activate peer-zlib-b
+
+create peer peer-xcodec-b
+set peer-xcodec-b.family IP
+set peer-xcodec-b.host "127.0.0.1"
+set peer-xcodec-b.port "8352"
+activate peer-xcodec-b
+
+create peer peer-wan-b
+set peer-wan-b.family IP
+set peer-wan-b.host "127.0.0.1"
+set peer-wan-b.port "8321"
+activate peer-wan-b
+
+# Proxies.
+create proxy proxy-passthrough
+set proxy-passthrough.type TCP-TCP
+set proxy-passthrough.interface if-passthrough
+set proxy-passthrough.interface_codec None
+set proxy-passthrough.peer peer-srv-1
+set proxy-passthrough.peer_codec None
+activate proxy-passthrough
+
+create proxy proxy-zlib
+set proxy-zlib.type TCP-TCP
+set proxy-zlib.interface if-zlib
+set proxy-zlib.interface_codec None
+set proxy-zlib.peer peer-zlib-b
+set proxy-zlib.peer_codec zlib-only
+activate proxy-zlib
+
+create proxy proxy-xcodec
+set proxy-xcodec.type TCP-TCP
+set proxy-xcodec.interface if-xcodec
+set proxy-xcodec.interface_codec None
+set proxy-xcodec.peer peer-xcodec-b
+set proxy-xcodec.peer_codec xcodec-only
+activate proxy-xcodec
+
+create proxy proxy-zlib-b
+set proxy-zlib-b.type TCP-TCP
+set proxy-zlib-b.interface if-zlib-b
+set proxy-zlib-b.interface_codec zlib-b
+set proxy-zlib-b.peer peer-srv-2
+set proxy-zlib-b.peer_codec None
+activate proxy-zlib-b
+
+create proxy proxy-xcodec-b
+set proxy-xcodec-b.type TCP-TCP
+set proxy-xcodec-b.interface if-xcodec-b
+set proxy-xcodec-b.interface_codec xcodec-b
+set proxy-xcodec-b.peer peer-srv-3
+set proxy-xcodec-b.peer_codec None
+activate proxy-xcodec-b
+
+create proxy proxy-wan-a
+set proxy-wan-a.type TCP-TCP
+set proxy-wan-a.interface if-wan-a
+set proxy-wan-a.interface_codec None
+set proxy-wan-a.peer peer-wan-b
+set proxy-wan-a.peer_codec wan-a
+activate proxy-wan-a
+
+create proxy proxy-wan-b
+set proxy-wan-b.type TCP-TCP
+set proxy-wan-b.interface if-wan-b
+set proxy-wan-b.interface_codec wan-b
+set proxy-wan-b.peer peer-srv-1
+set proxy-wan-b.peer_codec None
+activate proxy-wan-b
+
+create proxy-socks proxy-socks
+set proxy-socks.interface if-socks
+activate proxy-socks
+
+create monitor monitor0
+set monitor0.interface if-monitor
+activate monitor0

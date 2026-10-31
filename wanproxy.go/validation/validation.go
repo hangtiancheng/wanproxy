@@ -1,0 +1,111 @@
+// Package validation is the Go port of the TypeScript port's large-file
+// XCodec correctness harness: it streams a file through an XCodec
+// encode/decode roundtrip and verifies that the SHA-256 of the decoded
+// stream matches the original without loading the whole file into
+// memory.
+package validation
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"math/rand"
+	"os"
+
+	"github.com/hangtiancheng/wanproxy/wanproxy.go/xcodec"
+)
+
+// GiB and MiB size constants, as in the TypeScript harness.
+const (
+	GiB = 1024 * 1024 * 1024
+	MiB = 1024 * 1024
+)
+
+// Result describes a completed verification.
+type Result struct {
+	File           string
+	Bytes          int64
+	OriginalSHA256 string
+	DecodedSHA256  string
+	Verified       bool
+}
+
+// CreateRandomFile writes size bytes of deterministic pseudo-random data
+// to path, chunk by chunk, mirroring the TypeScript fixture generator.
+func CreateRandomFile(path string, size int64, seed int64) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	rng := rand.New(rand.NewSource(seed))
+	buf := make([]byte, MiB)
+	var written int64
+	for written < size {
+		n := int64(len(buf))
+		if size-written < n {
+			n = size - written
+		}
+		for i := int64(0); i < n; i++ {
+			buf[i] = byte(rng.Intn(256))
+		}
+		if _, err := f.Write(buf[:n]); err != nil {
+			return err
+		}
+		written += n
+	}
+	return f.Sync()
+}
+
+// HashFile returns the SHA-256 of a file in streaming form.
+func HashFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// VerifyXCodecFile streams the file through an XCodec encode/decode
+// roundtrip with memory caches bounded to cacheSegments segments and
+// compares SHA-256 hashes, like the TypeScript xcodec-file-verifier.
+func VerifyXCodecFile(path string, cacheSegments int) (*Result, error) {
+	original, err := HashFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	encCache := xcodec.NewMemoryCache(xcodec.WithSegmentLimit(cacheSegments))
+	decCache := xcodec.NewMemoryCache(xcodec.WithSegmentLimit(cacheSegments))
+
+	encoded := xcodec.NewEncodeReader(f, encCache)
+	decoded := xcodec.NewDecodeReader(encoded, decCache)
+
+	h := sha256.New()
+	n, err := io.Copy(h, decoded)
+	if err != nil {
+		return nil, fmt.Errorf("xcodec roundtrip failed: %w", err)
+	}
+
+	decodedHash := hex.EncodeToString(h.Sum(nil))
+	return &Result{
+		File:           path,
+		Bytes:          n,
+		OriginalSHA256: original,
+		DecodedSHA256:  decodedHash,
+		Verified:       original == decodedHash,
+	}, nil
+}
