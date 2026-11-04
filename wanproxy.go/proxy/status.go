@@ -55,6 +55,23 @@ type SocksProxyStatus struct {
 	Address             *BoundAddress `json:"address,omitempty"`
 }
 
+// UDPProxyStatus counts successfully forwarded datagrams in each direction.
+type UDPProxyStatus struct {
+	Kind                  string        `json:"kind"`
+	Name                  string        `json:"name"`
+	Listen                EndpointJSON  `json:"listen"`
+	Upstream              EndpointJSON  `json:"upstream"`
+	Listening             bool          `json:"listening"`
+	Address               *BoundAddress `json:"address,omitempty"`
+	CreatedSessions       int64         `json:"createdSessions"`
+	ActiveSessions        int           `json:"activeSessions"`
+	ClientToPeerDatagrams int64         `json:"clientToPeerDatagrams"`
+	PeerToClientDatagrams int64         `json:"peerToClientDatagrams"`
+	ClientToPeerBytes     int64         `json:"clientToPeerBytes"`
+	PeerToClientBytes     int64         `json:"peerToClientBytes"`
+	DroppedDatagrams      int64         `json:"droppedDatagrams"`
+}
+
 // EndpointJSON is the JSON rendering of an endpoint.
 type EndpointJSON struct {
 	Family string `json:"family,omitempty"`

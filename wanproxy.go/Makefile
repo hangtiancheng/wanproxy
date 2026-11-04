@@ -1,7 +1,7 @@
 GO ?= go
 EXE := $(shell $(GO) env GOEXE)
 
-.PHONY: all build test race vet fmt clean e2e
+.PHONY: all build test race vet fmt clean e2e schema
 
 all: build test
 
@@ -31,3 +31,7 @@ e2e:
 
 clean:
 	rm -rf bin
+
+# Optional development dependency; no daemon runtime dependencies.
+schema:
+	uv run --with jsonschema python config/schema_test.py

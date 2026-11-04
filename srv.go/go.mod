@@ -1,6 +1,6 @@
 module github.com/hangtiancheng/wanproxy/srv.go
 
-go 1.26.5
+go 1.26.0
 
 replace github.com/hangtiancheng/wanproxy/wanproxy.go => ../wanproxy.go
 

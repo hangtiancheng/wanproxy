@@ -2,8 +2,7 @@
 //
 // Usage: wanproxy [-q | -v] -c configfile
 //
-// The config file may use the classic wanproxy.conf directive format of
-// the C++ original or the JSON configuration format.
+// The config file uses JSON; see config/schema.json.
 package main
 
 import (
@@ -12,8 +11,10 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/hangtiancheng/wanproxy/wanproxy.go/common"
@@ -41,7 +42,7 @@ func (f *fleetSource) Status() proxy.FleetStatus { return f.fleet.Status() }
 
 func run() (err error) {
 	var (
-		configFile = flag.String("c", "", "configuration file (wanproxy.conf or JSON)")
+		configFile = flag.String("c", "", "JSON configuration file")
 		quiet      = flag.Bool("q", false, "log errors only")
 		verbose    = flag.Bool("v", false, "log debug messages")
 	)
@@ -63,14 +64,6 @@ func run() (err error) {
 	log.Info("WANProxy (Go port)")
 	log.Info("Copyright (c) 2008-2016 WANProxy.org. All rights reserved.")
 
-	// Install log masks in the C++ order.  With -q or -v the
-	// command-line catch-all goes in first, exactly like the C++
-	// main()'s Log::mask(".?", level) before config.configure(): since
-	// the first matching mask wins, log-mask objects in the file cannot
-	// override the command line.  Without them the configuration's
-	// per-component masks apply as written, and a catch-all at the
-	// configured default level is appended afterwards for components
-	// they do not match.
 	switch {
 	case *verbose:
 		common.SetLevel(slog.LevelDebug)
@@ -87,34 +80,16 @@ func run() (err error) {
 	defer func() { err = errors.Join(err, cfg.Close()) }()
 
 	if !*verbose && !*quiet {
+		for _, mask := range cfg.LogMasks {
+			if err := common.Mask(mask.Regex, mask.Level); err != nil {
+				return err
+			}
+		}
 		if err := common.Mask(".?", cfg.LogLevel); err != nil {
 			return err
 		}
 	}
-	fleet := proxy.NewFleet(log)
-	for _, p := range cfg.Proxies {
-		pc := p
-		listener := &proxy.Listener{
-			Name:       pc.Name,
-			Iface:      pc.Interface,
-			Peer:       pc.Peer,
-			IfaceCodec: pc.InterfaceCodec,
-			PeerCodec:  pc.PeerCodec,
-			Log:        common.Component("/wanproxy/proxy/" + pc.Name),
-		}
-		if pc.SSH != nil {
-			listener.SSH = &proxy.SSHSettings{HostKey: pc.SSH.HostKey}
-		}
-		fleet.AddTCP(listener)
-	}
-	for _, s := range cfg.SocksProxies {
-		sc := s
-		fleet.AddSocks(&proxy.SocksListener{
-			Name:  sc.Name,
-			Iface: sc.Interface,
-			Log:   common.Component("/wanproxy/proxy/" + sc.Name + "/socks"),
-		})
-	}
+	fleet := cfg.NewFleet(log)
 
 	if err := fleet.Start(); err != nil {
 		return err
@@ -123,18 +98,18 @@ func run() (err error) {
 
 	var mon *monitor.Server
 	if cfg.Monitor != nil {
-		mon = monitor.NewServer(cfg.Monitor.Interface, &fleetSource{objects: cfg.Objects, fleet: fleet})
+		mon = monitor.NewServer(*cfg.Monitor, &fleetSource{objects: cfg.Objects, fleet: fleet})
 		if err := mon.Start(); err != nil {
 			return err
 		}
 	}
 
 	for _, addr := range fleet.Addresses() {
-		fmt.Printf("proxy listening on %s:%d\n", addr.Address, addr.Port)
+		fmt.Printf("proxy listening on %s\n", net.JoinHostPort(addr.Address, strconv.Itoa(addr.Port)))
 	}
 	if mon != nil {
 		if addr := mon.Address(); addr != nil {
-			fmt.Printf("monitor listening on %s:%d\n", addr.Address, addr.Port)
+			fmt.Printf("monitor listening on %s\n", net.JoinHostPort(addr.Address, strconv.Itoa(addr.Port)))
 		}
 	}
 

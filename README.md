@@ -6,7 +6,7 @@ web front-end that drives it.
 
 | Directory      | What it is                                                                                                                                                                                                                          |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wanproxy.go/` | **Go proxy port** — xcodec dedup codec, pipe protocol, zlib, SSH transport, XCDFS disk cache, TCP/SOCKS/SSH proxies, config system, monitor, `tack`/`xcdump`/`fwdproxy` tools. Built on the Go standard library.                     |
+| `wanproxy.go/` | **Go proxy port** — xcodec dedup codec, pipe protocol, zlib, SSH transport, XCDFS disk cache, TCP/UDP/SOCKS/SSH proxies, JSON configuration and schema, monitor, `tack`/`xcdump`/`fwdproxy` tools. Built on the Go standard library.                     |
 | `srv.go/`      | **Go SRV** (yukino_http) — spawns the wanproxy.go fleet and SSH echo, and serves the file/monitor/bench/experiment/tools APIs.                                                                                                       |
 | `web/`         | React + TailwindCSS demo front-end.                                                                                                                                                                                                  |
 
@@ -25,7 +25,7 @@ every target. `make srv` runs only the backend, and `make web` runs only the
 front-end. All targets forward to `srv.go/cmd/stack`, a cross-platform Go
 orchestrator.
 
-On first boot the SRV renders its `demo/wanproxy.conf.template`, builds the
+On first boot the SRV renders its `demo/wanproxy.example.json`, builds the
 proxy if needed, and spawns the proxy fleet with an HTTP monitor on `:9901`
 plus an SSH echo server on `:8349`.
 

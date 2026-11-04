@@ -1,13 +1,36 @@
 {
-  "monitor": {
-    "listen": { "host": "127.0.0.1", "port": 8401 }
+  "$schema": "../config/schema.json",
+  "caches": {
+    "memory": {
+      "type": "memory",
+      "size": "128MB"
+    }
+  },
+  "codecs": {
+    "wan": {
+      "mode": "xcodec",
+      "cache": "memory"
+    }
   },
   "proxies": [
     {
-      "codec": { "mode": "xcodec", "role": "incoming" },
-      "listen": { "host": "127.0.0.1", "port": 8310 },
       "name": "tcp-xcodec-echo",
-      "upstream": { "host": "127.0.0.1", "port": 8311 }
+      "type": "tcp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8310
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 8311
+      },
+      "peerCodec": "wan"
     }
-  ]
+  ],
+  "monitor": {
+    "listen": {
+      "host": "127.0.0.1",
+      "port": 8401
+    }
+  }
 }

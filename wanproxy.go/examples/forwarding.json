@@ -1,0 +1,29 @@
+{
+  "$schema": "../config/schema.json",
+  "proxies": [
+    {
+      "name": "tcp-forward",
+      "type": "tcp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8300
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 8301
+      }
+    },
+    {
+      "name": "udp-forward",
+      "type": "udp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8300
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 8301
+      }
+    }
+  ]
+}

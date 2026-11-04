@@ -19,70 +19,58 @@ import (
 	wanproxyssh "github.com/hangtiancheng/wanproxy/wanproxy.go/ssh"
 )
 
-const sshConfigTemplate = `
-create cache memorycache0
-set memorycache0.type Memory
-set memorycache0.size 128MB
-activate memorycache0
-
-create codec codec0
-set codec0.codec XCodec
-set codec0.cache memorycache0
-set codec0.compressor zlib
-set codec0.compressor_level 6
-set codec0.track_statistics true
-activate codec0
-
-create codec codec1
-set codec1.codec XCodec
-set codec1.cache memorycache0
-set codec1.compressor zlib
-set codec1.compressor_level 6
-set codec1.track_statistics true
-activate codec1
-
-create interface if0
-set if0.family IP
-set if0.host "127.0.0.1"
-set if0.port "%d"
-activate if0
-
-create interface if1
-set if1.family IP
-set if1.host "127.0.0.1"
-set if1.port "%d"
-activate if1
-
-create peer peer0
-set peer0.family IP
-set peer0.host "127.0.0.1"
-set peer0.port "%d"
-activate peer0
-
-create peer peer1
-set peer1.family IP
-set peer1.host "127.0.0.1"
-set peer1.port "%d"
-activate peer1
-
-create proxy proxy0
-set proxy0.type SSH-SSH
-set proxy0.interface if0
-set proxy0.interface_codec None
-set proxy0.peer peer0
-set proxy0.peer_codec codec0
-set proxy0.server_host_key "%s"
-activate proxy0
-
-create proxy proxy1
-set proxy1.type SSH-SSH
-set proxy1.interface if1
-set proxy1.interface_codec codec1
-set proxy1.peer peer1
-set proxy1.peer_codec None
-set proxy1.server_host_key "%s"
-activate proxy1
-`
+const sshConfigTemplate = `{
+  "caches": {
+    "memory": {
+      "type": "memory",
+      "size": "128MB"
+    }
+  },
+  "codecs": {
+    "encode": {
+      "mode": "zlib+xcodec",
+      "cache": "memory",
+      "compressorLevel": 6,
+      "trackStatistics": true
+    },
+    "decode": {
+      "mode": "zlib+xcodec",
+      "cache": "memory",
+      "compressorLevel": 6,
+      "trackStatistics": true
+    }
+  },
+  "proxies": [
+    {
+      "name": "proxy0",
+      "type": "ssh",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": %[1]d
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": %[3]d
+      },
+      "peerCodec": "encode",
+      "hostKey": %[5]q
+    },
+    {
+      "name": "proxy1",
+      "type": "ssh",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": %[2]d
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": %[4]d
+      },
+      "interfaceCodec": "decode",
+      "hostKey": %[6]q
+    }
+  ]
+}`
 
 // TestDaemonSSHEndToEnd runs the daemon with two SSH-SSH proxies whose
 // WAN hop carries an XCodec+zlib codec: an SSH client connects through
@@ -144,7 +132,7 @@ func TestDaemonSSHEndToEnd(t *testing.T) {
 	}
 
 	ports := grabDistinctPorts(t, 2)
-	confPath := filepath.Join(dir, "wanproxy.conf")
+	confPath := filepath.Join(dir, "wanproxy.json")
 	conf := fmt.Sprintf(sshConfigTemplate, ports[0], ports[1], ports[1], echoPort, keyPath, keyPath)
 	if err := os.WriteFile(confPath, []byte(conf), 0o644); err != nil {
 		t.Fatal(err)

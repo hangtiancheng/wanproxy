@@ -1,263 +1,211 @@
 # wanproxy.go
 
-A Go rewrite of [WANProxy](https://github.com/wanproxy/wanproxy), the TCP
-WAN-optimization proxy.  The migration targets the core of the C++
-original — the **XCodec deduplication codec**, the **pipe protocol**
-session, the **zlib composition**, the **SSH transport**, the
-**XCDFS disk cache**, the **TCP/SOCKS/SSH proxies**, the **configuration
-system**, the **monitor** and the **tack/xcdump/fwdproxy/diskdup
-tools** —
-built on the Go standard library (`net`, `compress/zlib`, `net/http`,
-`crypto/*`, `encoding/binary`, `math/big`, `log/slog`).
+A Go rewrite of [WANProxy](https://github.com/wanproxy/wanproxy), built on
+Go's standard library. It includes XCodec deduplication, zlib composition,
+SSH transport, XCDFS disk caches, TCP/UDP forwarding, SOCKS4/5 CONNECT,
+monitoring, and the `tack`, `xcdump`, `fwdproxy` and `diskdup` tools.
+The legacy C++ tree is independent of this Go project.
 
-The C++ original documents the core algorithms and legacy wire format.
-Correctness, bounded streaming and idiomatic Go take precedence over
-reproducing its implementation or bugs. See [the migration review](MIGRATION_REVIEW.md)
-for the architecture, fixes and remaining design work.
-
-## Layout
-
-| Go package / command | C++ original | Purpose |
-|---|---|---|
-| `xcodec/` | `xcodec/` | Rolling hash, encoder, decoder, backref window, memory/pair caches, **XCDFS disk cache** (`XCodecDisk`/`XCodecDiskCache`), frame codec, pipe protocol session (`XCodecPipePair`), streaming readers |
-| `ssh/` | `ssh/` | SSH-2 transport: version exchange, KEXINIT negotiation, diffie-hellman-group-exchange (SHA-1/SHA-256, C++ test group), RFC 4253 key derivation, binary packets, ssh-rsa host keys, `SSHStream` application framing |
-| `pipeline/` | `zlib/`, `programs/wanproxy/wanproxy_codec_pipe_pair.*` | Codec spec, direction/role step resolution, zlib deflate/inflate wrappers, byte-counter stats |
-| `proxy/` | `programs/wanproxy/proxy_*` | TCP-TCP proxy listener, SOCKS4/5 proxy, bidirectional relay with half-close and session drain, fleet |
-| `config/` | `config/`, `programs/wanproxy/wanproxy_config*` | Classic `wanproxy.conf` parser (`create`/`set`/`activate`, `$obj.member` references, quoted strings, `128MB` sizes) and a JSON configuration format |
-| `monitor/` | `programs/wanproxy/monitor_client.*` | HTTP monitor: HTML at `/`, per-object at `/object/<name>`, text under `/:text`, JSON at `/status` |
-| `validation/` | — | Large-file XCodec roundtrip harness with SHA-256 verification |
-| `common/` | `common/log.*` | Leveled logging with C++-style component paths |
-| `cmd/wanproxy` | `programs/wanproxy` | The daemon: `wanproxy [-q \| -v] -c configfile` |
-| `cmd/xcdump` | `programs/xcdump` | XCodec stream decoder and pretty-printer: `xcdump [-v] [file ...]` |
-| `cmd/tack` | `programs/tack` | File-oriented dictionary compression: `tack [-p cache \| -N] [-svQ] {-c\|-d\|-h} [file ...]` |
-| `cmd/fwdproxy` | `programs/fwdproxy` | File-driven plain port forwarder: `fwdproxy [-q \| -v] -c configfile` |
-| `cmd/diskdup` | `programs/diskdup` | Block-level minimal-write volume duplication: `diskdup [-s block_size] source target` |
-
-## Parity evidence
-
-* **Hash**: `xcodec/hash_test.go` runs the C++ `xcodec-hash1`
-  known-answer vectors — the digests of all 256 single-byte-filled
-  segments — plus roll-vs-recompute checks.  `TestEncodeDecodeCharKAT`
-  ports the C++ `xcodec-encode-decode1` roundtrip for every byte value.
-* **Wire format**: `xcodec/golden_test.go` pins the exact bytes of
-  ESCAPE/EXTRACT/REF/BACKREF frames and HELLO/FRAME/ASK/LEARN/ADVANCE/
-  EOS/EOS_ACK control frames, including a minimal session exchange.
-* **Session**: `xcodec/session_test.go` exercises the full
-  HELLO/FRAME/ASK/LEARN/ADVANCE/EOS/EOS_ACK state machine with separate
-  per-peer caches, protocol-violation rejections and the C++
-  "gratuitous LEARN" rule.
-* **Deployment**: `proxy/relay_test.go` runs a two-proxy chain
-  (client-side proxy with a peer codec, server-side proxy with an
-  interface codec) over real TCP with separate caches, verifying data
-  integrity, the four C++ byte counters per codec, and cross-connection
-  deduplication.  `e2e/` builds and runs the daemon with the classic
-  config topology (SOCKS client → proxy0 → xcodec+zlib WAN → proxy1 →
-  proxy-socks0 → server) and asserts the wire-byte reduction.
-  Three-proxy tests exercise both codec slots with 18 MiB transfers and
-  tiny caches. `proxy/flow_test.go` uses unbuffered `net.Pipe` links to
-  verify control traffic progresses during blocked writes.
-* **Original config**: `config/config_test.go` parses the exact
-  `wanproxy.conf` shipped with the C++ implementation, including the
-  SSH-SSH proxy type with PEM host keys.
-* **SSH**: `ssh/transport_test.go` covers the handshake (negotiation,
-  DH group exchange, key derivation, NEWKEYS switch), tagged/untagged
-  application framing and 100KB encrypted roundtrips; `proxy/ssh_test.go`
-  runs SSH-SSH proxy chains; `e2e/ssh_e2e_test.go` runs the daemon with
-  two SSH-SSH proxies around an XCodec+zlib WAN hop.
-* **XCDFS**: `xcodec/xcdfs_test.go` covers the registry, FIFO
-  wraparound with index invalidation, boundary corruption checks,
-  per-XUID namespace isolation across reopens, and Memory+Disk pairing.
-* **Rolling hash speed**: `xcodec/bench_test.go` mirrors the C++ speed
-  examples (`xcodec-hash-speed1`, `xcodec-hash-roll1`,
-  `xcodec-encode-decode1`) as Go benchmarks for hash, roll, encode,
-  decode and session roundtrip throughput.
-* **Log masks**: `common/log_test.go` covers the C++ `Log::mask`
-  semantics — ordered per-component regex masks, first match wins,
-  unmatched components log, empty mask list logs everything — and
-  `config/config_test.go` covers `log-mask` activation, including
-  invalid-regex rejection like the C++ `regcomp` failure.
-* **diskdup**: `cmd/diskdup/main_test.go` covers minimal-write
-  duplication, stop-at-shorter-volume, partial trailing blocks and the
-  CLI.
-
-## Quick start
+## Build and run
 
 ```sh
 go build ./...
 go test ./...
+go run ./cmd/wanproxy -c examples/udp-echo.json
+# Full TCP + SOCKS + UDP deployment with a memory/disk cache hierarchy:
+go run ./cmd/wanproxy -c wanproxy.example.json
+```
 
-# Run the daemon with the classic C++ config format (see
-# wanproxy.conf.example):
-go run ./cmd/wanproxy -c wanproxy.conf.example
+Configuration is **JSON only**. The directive language (`create`, `set`,
+`activate`), format detection and old inline-codec JSON layout have been
+removed. All listeners belong to one `proxies` array and have an explicit
+`type`: `tcp`, `udp`, `ssh` or `socks`.
 
-# Or with the JSON configuration format:
-cat > proxy.json <<'JSON'
+## JSON configuration and schema
+
+[config/schema.json](config/schema.json) is a JSON Schema Draft 2020-12
+schema. Add `$schema` to a configuration to enable editor completion and
+validation; its path is relative to that configuration file:
+
+```json
 {
+  "$schema": "../config/schema.json",
   "proxies": [
     {
-      "name": "local-echo",
-      "listen": { "host": "127.0.0.1", "port": 3300 },
-      "upstream": { "host": "127.0.0.1", "port": 3301 },
-      "codec": { "mode": "zlib+xcodec", "role": "incoming", "compressorLevel": 6 }
+      "name": "udp-echo",
+      "type": "udp",
+      "listen": { "host": "127.0.0.1", "port": 8300 },
+      "upstream": { "host": "127.0.0.1", "port": 8301 },
+      "idleTimeoutSeconds": 60,
+      "maxSessions": 1024
     }
   ],
-  "monitor": { "listen": { "host": "127.0.0.1", "port": 9900 } }
+  "monitor": { "listen": { "host": "127.0.0.1", "port": 8404 } }
 }
-JSON
-go run ./cmd/wanproxy -c proxy.json
 ```
 
-Monitor endpoints: `GET /status` (JSON), `GET /` (HTML), `GET /:text`,
-`GET /object/<name>`.
+The schema describes every supported field, disallows unknown properties,
+and enforces settings specific to each proxy/cache/codec type. The daemon
+also checks unique proxy names, existing references, acyclic cache graphs,
+Go regular expressions, cache size overflow and SSH key files. It rejects
+null values, duplicate JSON properties and trailing content. It does not
+fetch the `$schema` URI or depend on a schema library at runtime.
 
-### SSH-SSH proxies
+| Section | Configuration |
+|---|---|
+| `proxies` | Nonempty array; each entry requires a unique `name`, `type` and `listen`. TCP, UDP and SSH also require `upstream`. |
+| Endpoint | `host` and integer `port`; optional `family`: `ip` (default), `ipv4`, `ipv6`. Listen port `0` requests an ephemeral port; upstream ports must be `1..65535`. |
+| Unix endpoint | `{"family":"unix","path":"/tmp/proxy.sock"}`; supported by stream listeners and the monitor. UDP requires IP endpoints. |
+| `caches` | Map of named `memory`, `disk` and `pair` caches. |
+| `codecs` | Map of named stream codecs; proxies reference them with `interfaceCodec` and `peerCodec`. |
+| `log` | `level`: `debug`, `info` (default), `warn`, `error`; optional ordered `masks` with `regex` and `level`. First matching mask wins, then the default level applies. `-q`/`-v` override file logging. |
+| `monitor` | Optional object containing a `listen` endpoint. |
 
-The classic config supports the C++ `SSH-SSH` proxy type; both hops run
-the ported SSH-2 transport and the codec sits between them, exactly
-like the C++ `SSHProxyListener`/`SSHProxyConnector`:
+Names use letters, digits, `.`, `_` and `-`, beginning with a letter or
+digit. Paths for disk caches, Unix sockets and SSH keys resolve relative
+to the **process working directory**, or may be absolute.
 
+### UDP forwarding
+
+Each client IP/port gets its own connected upstream UDP socket. Datagrams
+and replies retain their boundaries, including empty datagrams. IPv4 and
+IPv6 are supported independently on either side. The sockets reserve a
+send buffer large enough for a complete UDP payload; network and OS limits
+still apply.
+
+Defaults are 60 seconds of inactivity and 1024 sessions per listener.
+`idleTimeoutSeconds` accepts `1..86400`, and `maxSessions` accepts
+`1..65536`. Activity in either direction refreshes a session. Idle sessions,
+including pending dials, are collected within one additional sweep interval
+(at most one second). Each session queues at most 16 outbound datagrams.
+Packets exceeding the session or queue limit are dropped; one client's
+pending dial or full queue does not stop other clients. UDP retains its
+normal loss and ordering semantics.
+
+UDP is fixed-target forwarding. Stream codecs and SSH framing are not
+applied to UDP. SOCKS listeners support TCP CONNECT; SOCKS5 UDP ASSOCIATE
+is not implemented.
+
+The monitor reports UDP session counts, successful datagram/byte totals
+in both directions, and packets dropped by the admission/queue limits.
+`Stop` cancels pending dials, closes all sockets and joins workers.
+
+### Stream codecs and caches
+
+A codec on `peerCodec` encodes traffic toward the upstream WAN hop and
+decodes its replies. A codec on `interfaceCodec` decodes incoming WAN
+traffic and encodes replies. Both slots may be set for a middle proxy.
+See [examples/two-proxy-chain.json](examples/two-proxy-chain.json).
+
+```json
+{
+  "caches": {
+    "memory": { "type": "memory", "size": "128MB" },
+    "disk": { "type": "disk", "size": "1GB", "path": "wanproxy.xcache" },
+    "shared": { "type": "pair", "primary": "memory", "secondary": "disk" }
+  },
+  "codecs": {
+    "wan": {
+      "mode": "zlib+xcodec",
+      "cache": "shared",
+      "compressorLevel": 6,
+      "trackStatistics": true
+    }
+  },
+  "proxies": [
+    {
+      "name": "encode",
+      "type": "tcp",
+      "listen": { "host": "127.0.0.1", "port": 3300 },
+      "upstream": { "host": "127.0.0.1", "port": 3301 },
+      "peerCodec": "wan"
+    }
+  ]
+}
 ```
-create proxy proxy0
-set proxy0.type SSH-SSH
-set proxy0.interface if0
-set proxy0.interface_codec None
-set proxy0.peer peer0
-set proxy0.peer_codec codec0
-set proxy0.server_host_key "ssh-server1.pem"
-activate proxy0
-```
 
-The host key is a PEM PKCS#1 `RSA PRIVATE KEY` file (PKCS#8 is also
-accepted).  As in the C++ version, the key defaults to
-`ssh-server1.pem` when unset.
+Codec modes are `none`, `zlib`, `xcodec`, `zlib+xcodec`. XCodec modes
+require a named cache. Zlib modes accept `compressorLevel` from `-2` to `9`
+(default `-1`). `trackStatistics` enables the four codec byte counters.
+Declaration order does not matter; references resolve by name.
 
-### tack and xcdump
+Cache sizes are decimal bytes with optional case-insensitive
+`B`/`KB`/`MB`/`GB`/`TB` suffixes, using powers of 1024. A memory cache
+with omitted/zero size uses the implementation's unbounded cache;
+set an explicit size to bound it. A disk cache with omitted/zero size
+opens an existing volume at its current size. New volumes require a size.
+A pair cache requires `primary` and `secondary` names and derives its
+identity from the secondary. Existing disk volumes cannot be resized
+implicitly. Failed configuration loads close all acquired disk references.
+
+### SSH and SOCKS
+
+An SSH proxy uses `"type":"ssh"` with an explicit `hostKey` PEM file
+(PKCS#1 RSA or PKCS#8). It runs the SSH server transport on the listen
+side and the SSH client transport on the upstream side. Codec slots
+work as for TCP. There is no implicit host-key filename.
+
+A SOCKS proxy uses `"type":"socks"` with a `listen` endpoint and no
+`upstream` or codec slots. It supports SOCKS4 and SOCKS5 no-auth CONNECT,
+with success sent after a successful target dial. SSH and SOCKS accept
+`handshakeTimeoutSeconds` in `1..86400`, defaulting to 15 seconds.
+SOCKS4A, BIND and UDP ASSOCIATE are not supported.
+
+## Monitor
+
+`GET /status` returns the live fleet JSON, including `kind: "udp"`
+entries. `/` shows configuration and status, `/object/<name>` selects a
+named JSON object, and `/:text` exports text. Monitor object names use
+`cache.<name>`, `codec.<name>` and `proxy.<name>` to separate namespaces.
+
+## Tools
 
 ```sh
-go run ./cmd/tack -c -s input.file > input.tack   # compress
-go run ./cmd/tack -d input.tack > input.restored  # decompress
-go run ./cmd/tack -c -p dict.cache input.file > input.tack  # dictionary mode
-go run ./cmd/tack -c -F fifo.xcache input.file > input.tack # XCDFS FIFO cache
-go run ./cmd/tack -T -E -c -s input.file > input.tack       # with timing
-go run ./cmd/xcdump -v input.tack | head          # inspect the stream
-```
-
-### diskdup
-
-```sh
+go run ./cmd/tack -c -s input.file > input.tack
+go run ./cmd/tack -d input.tack > input.restored
+go run ./cmd/tack -c -p dict.cache input.file > input.tack
+go run ./cmd/tack -c -F fifo.xcache input.file > input.tack
+go run ./cmd/xcdump -v input.tack
 go run ./cmd/diskdup -s 65536 source.img target.img
+go run ./cmd/fwdproxy -c examples/forwarding.json
 ```
 
-Reads both volumes block by block and writes a target block only when
-it differs from the source block, stopping at the end of the shorter
-volume, like the C++ original.
+`fwdproxy` uses the same JSON schema, restricted to plain TCP/UDP forwarding without
+stream codecs or a monitor.
 
-## How the pipeline maps to C++
+## Architecture and verification
 
-The C++ `WANProxyCodecPipePair` wires, per proxied connection:
+`proxy/` owns stream relays, UDP sessions, listeners and fleet lifecycle.
+`pipeline/` composes zlib and XCodec transforms. `xcodec/` contains the hash,
+frame codec, bounded pipe sessions and memory/disk caches. `ssh/` implements
+SSH-2 transport. `config/` loads JSON, resolves named resources and owns
+disk handles. `monitor/` exports configuration and runtime status.
 
+Stream relays give socket reads, application forwarding and protocol
+response writes separate goroutines with bounded queues. XCodec
+ASK/LEARN traffic can progress while application writes block; ADVANCE
+and EOS_ACK follow plaintext delivery. TCP half-close drains both
+sources before closing sockets. Session defaults allow 8 MiB / 256
+unacknowledged frames; receive buffers and relay queues have 16 MiB
+limits. These are per-buffer limits, not a process memory budget.
+Default outbound dialing has a 30-second timeout.
+
+Tests cover the original C++ hash known-answer vectors, exact wire
+frames, cache lifecycle and corruption checks, codec chains and SSH
+handshakes. Daemon end-to-end tests exercise JSON-configured TCP/SOCKS,
+SSH and UDP topologies, including monitored codec reduction and UDP
+empty/large datagrams. UDP tests also cover IPv4/IPv6, concurrent client
+isolation, idle recreation, session/queue limits and cancellation.
+
+```sh
+go test ./...
+go test -race ./...
+go vet ./...
+# Optional Python schema validator, isolated with uv:
+make schema
 ```
-client → upstream:  [inflate, session decode]  then  [session encode, deflate]
-upstream → client:  [inflate, session decode]  then  [session encode, deflate]
-```
 
-where the first bracket applies when an *interface codec* is configured
-(C++ `XCodecPipePairTypeServer`) and the second when a *peer codec* is
-configured (`XCodecPipePairTypeClient`).  Data flowing **toward the WAN
-is always encoded then deflated; data flowing in from the WAN is
-inflated then decoded**.  The JSON `role` field selects the slot:
-`incoming` → peer codec, `outgoing` → interface codec.
-
-Protocol responses cross over inside each session exactly like the C++
-pipe pair: `<ASK>`/`<ADVANCE>`/`<EOS_ACK>` produced while decoding the
-peer's stream are written back on the same wire (through the same
-deflate stream) their frames arrived on.  Half-close propagates with
-`<EOS>`/`<EOS_ACK>` plus TCP `CloseWrite`, and each direction drains
-its source socket to EOF before the relay closes anything, so final
-frames are not lost to a reset during normal shutdown.
-
-The Go relay gives socket reads, application forwarding and protocol
-response writes separate goroutines. Bounded queues connect them;
-`ADVANCE` and `EOS_ACK` are sent after their plaintext has been forwarded.
-This keeps a blocked socket writer from stopping the reader that must
-process the control frames needed to unblock it. Plain forwarding uses
-`io.Copy` directly.
-
-Sessions default to at most 8 MiB / 256 unacknowledged plaintext frames.
-`EncodeData` returns `ErrBackpressure` when full; `EncodeDataContext` waits
-for `ADVANCE` or cancellation. Receive buffers, output per Receive and each
-relay queue have 16 MiB limits. These are per-buffer/queue limits, not a process memory
-budget. Shared caches have their own sizing rules.
-
-Listeners support `DialContext`; default dialing has a 30-second timeout.
-`Stop` cancels dialing, closes tracked sockets and joins connection handlers.
-SOCKS negotiation defaults to a 15-second deadline. Embedded users should
-stop the fleet before calling `Config.Close`, which releases disk volumes.
-
-
-The identity announced in `<HELLO>` is the **cache UUID**, stable
-across connections (C++ `codec_->cache()->uuid_encode`), so a
-reconnecting peer reuses the decoder cache it connected before and
-references resolve without new `<ASK>`/`<LEARN>` exchanges.
-
-## Deviations from the C++ original
-
-* **SSH NEWKEYS**: the C++ code never sends the first NEWKEYS message
-  (acknowledged by two XXX comments), which leaves the data phase
-  unencrypted.  This port sends NEWKEYS after key exchange as the RFC
-  requires. Go↔Go encrypted exchanges are tested; C++ interoperability
-  remains a separate validation target. Packet padding is random, and
-  malformed packet alignment, oversized application frames and degenerate
-  DH public values are rejected.
-* **SSH algorithm subset**: the C++ table entries without Go standard
-  library equivalents are omitted — blowfish/cast128/idea ciphers and
-  hmac-ripemd160.  The negotiated defaults (aes128-ctr, hmac-sha1,
-  diffie-hellman-group-exchange-sha256) match what modern OpenSSL
-  builds of the C++ version select.  The algorithm set mirrors the C++
-  original and is dated by modern standards.
-* **XCDFS registry write**: the C++ `registry_write` reads registry
-  block N but writes the update back to block 0, corrupting the
-  registry for XUIDs beyond the first 128; this port writes to the
-  correct block.  Volumes using fewer than 128 peer namespaces are
-  unaffected and remain interoperable.
-* **XCDFS in-flight index**: as in C++, the in-flight index block is
-  only written when it fills (the documented "little consistency"
-  tradeoff), so up to 203 entries are lost on exit.
-* **XCDFS ownership**: shared opens are initialized before publication and
-  reference counted. Existing volumes cannot be resized implicitly. Empty
-  namespaces are collected on load, rather than reusing live cache handles
-  when the registry fills; an exhausted disk decoder falls back to memory.
-* **SOCKS**: success follows a successful target dial. SOCKS5 replies carry
-  the outbound socket's bound address, including the correct IPv6 type;
-  failed dials return failure codes. Buffered application data is preserved
-  for both SOCKS4 and SOCKS5.
-* **Session lifecycle**: data after EOS, premature EOS_ACK and truncated
-  transport shutdown are errors. LEARN answers are pinned until pending
-  decoding completes, independently of shared-cache eviction.
-* **tack**: decode failures now surface as a non-zero exit code (the
-  C++ version logs and exits 0); `-T/-E/-S` timing output goes to
-  stderr in plain lines rather than through the C++ log format. Buffered
-  output and dictionary flush failures propagate to the exit status;
-  hashing is independent of source read boundaries.
-* **diskdup exit codes**: read/write failures and a volume ending
-  mid-block exit non-zero (the C++ version logs and exits 0), matching
-  the tack deviation above.
-* **Not ported**: the IRC and HTTP protocol
-  libraries, the `uinet` user-space TCP/IP stack, the event/callback
-  subsystem, the `Buffer`/refcount/thread infrastructure (Go slices,
-  goroutines and GC replace them), and the `websplat` demo web server.
-* **log masks**: implemented with the C++ `Log::mask` semantics — an
-  ordered list of component regexes where the first match decides and
-  unmatched components log.  With `-q`/`-v` the daemon installs the
-  command-line catch-all first, exactly like the C++ `main()`, so
-  `log-mask` objects in the file cannot override the command line (as
-  in C++).  Without `-q`/`-v` the configuration's per-component masks
-  apply as written and a catch-all at the most detailed configured
-  level is appended for components they do not match; the C++ daemon
-  shadows them behind its default catch-all instead.  Level names map
-  onto slog preserving what each mask admits: `EMERG`–`ERR` → Error,
-  `WARNING`/`NOTICE` → Warn, `INFO` → Info, `DEBUG` → Debug.
-* **XCodecCache::connect registry**: the C++ process-global UUID map is
-  replaced by per-cache child maps (memory caches) and the shared XCDFS
-  registry (disk caches).
-* **SOCKS4A** is not supported, matching the C++ implementation.
+Schema tests validate the schema itself, all example configurations and
+fixtures shared with the Go parser tests. The daemon has no third-party
+runtime dependencies. The legacy wire format remains the algorithmic
+reference; C++ SSH interoperability is a separate validation target.

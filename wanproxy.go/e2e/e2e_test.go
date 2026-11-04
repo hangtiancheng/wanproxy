@@ -1,5 +1,4 @@
-// Package e2e runs the wanproxy daemon binary against the classic
-// wanproxy.conf topology of the C++ original: a SOCKS client connects
+// Package e2e runs the JSON-configured wanproxy daemon: a SOCKS client connects
 // through the client-side proxy, across an XCodec+zlib WAN link to the
 // server-side proxy, through the SOCKS proxy and to the target server.
 package e2e
@@ -43,105 +42,80 @@ func exitOK(err error) bool {
 	return err == nil || runtime.GOOS == "windows"
 }
 
-const configTemplate = `
-create log-mask catch-all
-set catch-all.regex "^/"
-set catch-all.mask INFO
-activate catch-all
-
-create cache memorycache0
-set memorycache0.type Memory
-set memorycache0.size 128MB
-activate memorycache0
-
-create cache diskcache0
-set diskcache0.type Disk
-set diskcache0.size 1GB
-set diskcache0.path "%s"
-activate diskcache0
-
-create cache cache0
-set cache0.type Pair
-set cache0.primary memorycache0
-set cache0.secondary diskcache0
-activate cache0
-
-create codec codec0
-set codec0.codec XCodec
-set codec0.cache cache0
-set codec0.compressor zlib
-set codec0.compressor_level 6
-set codec0.track_statistics true
-activate codec0
-
-create codec codec1
-set codec1.codec XCodec
-set codec1.cache cache0
-set codec1.compressor zlib
-set codec1.compressor_level 6
-set codec1.track_statistics true
-activate codec1
-
-create interface if0
-set if0.family IP
-set if0.host "127.0.0.1"
-set if0.port "%d"
-activate if0
-
-create interface if1
-set if1.family $if0.family
-set if1.host $if0.host
-set if1.port "%d"
-activate if1
-
-create interface if2
-set if2.family $if0.family
-set if2.host $if0.host
-set if2.port "%d"
-activate if2
-
-create peer peer0
-set peer0.family $if1.family
-set peer0.host $if1.host
-set peer0.port $if1.port
-activate peer0
-
-create peer peer1
-set peer1.family $if2.family
-set peer1.host $if2.host
-set peer1.port $if2.port
-activate peer1
-
-create proxy proxy0
-set proxy0.type TCP-TCP
-set proxy0.interface if0
-set proxy0.interface_codec None
-set proxy0.peer peer0
-set proxy0.peer_codec codec0
-activate proxy0
-
-create proxy proxy1
-set proxy1.type TCP-TCP
-set proxy1.interface if1
-set proxy1.interface_codec codec1
-set proxy1.peer peer1
-set proxy1.peer_codec None
-activate proxy1
-
-create proxy-socks proxy-socks0
-set proxy-socks0.interface if2
-activate proxy-socks0
-
-create interface if3
-set if3.family $if0.family
-set if3.host $if0.host
-set if3.port "%d"
-activate if3
-
-create monitor monitor0
-set monitor0.interface if3
-activate monitor0
-`
+const configTemplate = `{
+  "caches": {
+    "memory": {
+      "type": "memory",
+      "size": "128MB"
+    },
+    "disk": {
+      "type": "disk",
+      "size": "1GB",
+      "path": %[1]q
+    },
+    "shared": {
+      "type": "pair",
+      "primary": "memory",
+      "secondary": "disk"
+    }
+  },
+  "codecs": {
+    "encode": {
+      "mode": "zlib+xcodec",
+      "cache": "shared",
+      "compressorLevel": 6,
+      "trackStatistics": true
+    },
+    "decode": {
+      "mode": "zlib+xcodec",
+      "cache": "shared",
+      "compressorLevel": 6,
+      "trackStatistics": true
+    }
+  },
+  "proxies": [
+    {
+      "name": "proxy0",
+      "type": "tcp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": %[2]d
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": %[3]d
+      },
+      "peerCodec": "encode"
+    },
+    {
+      "name": "proxy1",
+      "type": "tcp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": %[3]d
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": %[4]d
+      },
+      "interfaceCodec": "decode"
+    },
+    {
+      "name": "proxy-socks0",
+      "type": "socks",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": %[4]d
+      }
+    }
+  ],
+  "monitor": {
+    "listen": {
+      "host": "127.0.0.1",
+      "port": %[5]d
+    }
+  }
+}`
 
 // grabDistinctPorts reserves n distinct ports, holding the listeners
 // open until all are reserved so the OS cannot hand one out twice.
@@ -207,7 +181,7 @@ func TestDaemonEndToEnd(t *testing.T) {
 	}
 
 	cacheDir := filepath.Join(dir, "wanproxy.xcache")
-	confPath := filepath.Join(dir, "wanproxy.conf")
+	confPath := filepath.Join(dir, "wanproxy.json")
 
 	// Start the daemon, retrying with fresh ports if a grabbed port is
 	// taken again before the daemon can bind it.

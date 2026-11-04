@@ -169,17 +169,13 @@ func (s *Server) exportHTML(selection string) string {
 }
 
 func isPointerField(objects []config.Object, objName, field string) bool {
-	pointerFields := map[string]bool{
-		"primary": true, "secondary": true, "cache": true,
-		"interface": true, "interface_codec": true, "peer": true,
-		"peer_codec": true,
-	}
-	if !pointerFields[field] {
-		return false
-	}
-	for _, o := range objects {
-		if o.Name == objName {
-			return true
+	for _, obj := range objects {
+		if obj.Name == objName {
+			for _, f := range obj.Fields {
+				if f.Name == field {
+					return f.Type == "pointer"
+				}
+			}
 		}
 	}
 	return false
@@ -225,6 +221,13 @@ func statusEntries(status proxy.FleetStatus) [][]string {
 				html.EscapeString(p.Name), p.Kind, fmt.Sprintf("%v", p.Listening),
 				fmt.Sprintf("%d", p.AcceptedConnections), fmt.Sprintf("%d", p.ActiveSockets),
 				html.EscapeString(codecStatsString(p.InterfaceCodec, p.PeerCodec)),
+			})
+		case proxy.UDPProxyStatus:
+			rows = append(rows, []string{
+				html.EscapeString(p.Name), p.Kind, fmt.Sprintf("%v", p.Listening),
+				fmt.Sprintf("%d", p.CreatedSessions), fmt.Sprintf("%d", p.ActiveSessions),
+				fmt.Sprintf("client→peer: %d datagrams / %d bytes; peer→client: %d datagrams / %d bytes; dropped: %d",
+					p.ClientToPeerDatagrams, p.ClientToPeerBytes, p.PeerToClientDatagrams, p.PeerToClientBytes, p.DroppedDatagrams),
 			})
 		case proxy.SocksProxyStatus:
 			rows = append(rows, []string{

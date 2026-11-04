@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -19,7 +20,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -127,19 +127,53 @@ func ensureHostKey() error {
 	return nil
 }
 
-// renderConfig renders demo/wanproxy.conf.template into data/wanproxy.conf.
+// renderConfig loads the JSON demo configuration, applies runtime ports and
+// paths, and writes data/wanproxy.json with JSON escaping handled by the encoder.
 func renderConfig() error {
-	tpl, err := os.ReadFile(paths.TemplatePath)
+	data, err := os.ReadFile(paths.ExampleConfigPath)
 	if err != nil {
-		return fmt.Errorf("read template: %w", err)
+		return fmt.Errorf("read example configuration: %w", err)
 	}
-	out := string(tpl)
-	out = strings.ReplaceAll(out, "{{SRV_PORT}}", strconv.Itoa(paths.SRVPort()))
-	out = strings.ReplaceAll(out, "{{MONITOR_PORT}}", strconv.Itoa(paths.MonitorPort()))
-	out = strings.ReplaceAll(out, "{{SSH_ECHO_PORT}}", strconv.Itoa(paths.SSHEchoPort()))
-	out = strings.ReplaceAll(out, "{{XCACHE_PATH}}", paths.XCachePath)
-	out = strings.ReplaceAll(out, "{{HOSTKEY_PATH}}", paths.HostKeyPath)
-	if err := os.WriteFile(paths.ConfigPath, []byte(out), 0o644); err != nil {
+	var file map[string]any
+	if err := json.Unmarshal(data, &file); err != nil {
+		return fmt.Errorf("parse example configuration: %w", err)
+	}
+	// These defaults are the origin, monitor and SSH echo endpoints in the
+	// shipped example. Internal proxy hop ports are intentionally fixed.
+	ports := map[float64]int{3101: paths.SRVPort(), 9901: paths.MonitorPort(), 8349: paths.SSHEchoPort()}
+	var apply func(any)
+	apply = func(node any) {
+		switch node := node.(type) {
+		case map[string]any:
+			for key, value := range node {
+				switch key {
+				case "port":
+					if n, ok := value.(float64); ok {
+						if port, ok := ports[n]; ok {
+							node[key] = port
+						}
+					}
+				case "path":
+					if value == "wanproxy.xcache" {
+						node[key] = paths.XCachePath
+					}
+				case "hostKey":
+					node[key] = paths.HostKeyPath
+				}
+				apply(value)
+			}
+		case []any:
+			for _, value := range node {
+				apply(value)
+			}
+		}
+	}
+	apply(file)
+	data, err = json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode daemon configuration: %w", err)
+	}
+	if err := os.WriteFile(paths.ConfigPath, append(data, '\n'), 0o644); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	log.Printf("[daemon] rendered daemon config at %s", paths.ConfigPath)

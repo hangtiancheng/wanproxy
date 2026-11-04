@@ -3,25 +3,23 @@
 //
 // Usage: fwdproxy [-q | -v] -c configfile
 //
-// Each configuration line holds four words:
-//
-//	interface-host interface-port remote-host remote-port
-//
-// and creates one plain TCP proxy forwarding the interface endpoint to
-// the remote endpoint, without any codec.
+// Configuration uses the daemon JSON schema, restricted to plain TCP/UDP
+// forwarding without a monitor or stream codecs.
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
-	"strings"
+	"strconv"
 	"syscall"
 
 	"github.com/hangtiancheng/wanproxy/wanproxy.go/common"
-	"github.com/hangtiancheng/wanproxy/wanproxy.go/proxy"
+	"github.com/hangtiancheng/wanproxy/wanproxy.go/config"
 )
 
 func main() {
@@ -31,9 +29,9 @@ func main() {
 	}
 }
 
-func run() error {
+func run() (err error) {
 	var (
-		configFile = flag.String("c", "", "configuration file")
+		configFile = flag.String("c", "", "JSON configuration file")
 		quiet      = flag.Bool("q", false, "log errors only")
 		verbose    = flag.Bool("v", false, "log debug messages")
 	)
@@ -54,51 +52,48 @@ func run() error {
 	case *quiet:
 		common.SetLevel(slog.LevelError)
 	default:
-		common.SetLevel(slog.LevelInfo)
+		common.ResetMasks()
 	}
 	log := common.Component("/fwdproxy")
 
-	data, err := os.ReadFile(*configFile)
+	cfg, err := config.Load(*configFile)
 	if err != nil {
-		return fmt.Errorf("could not open file: %w", err)
+		return err
 	}
-
-	fleet := proxy.NewFleet(log)
-	for i, line := range strings.Split(string(data), "\n") {
-		tokens := strings.Fields(line)
-		if len(tokens) == 0 || strings.HasPrefix(tokens[0], "#") {
-			continue
-		}
-		if len(tokens) != 4 {
-			return fmt.Errorf("wrong number of items in configuration entry on line %d: expected 4, got %d", i+1, len(tokens))
-		}
-		fleet.AddTCP(&proxy.Listener{
-			Name: fmt.Sprintf("configured-%d", i+1),
-			Iface: proxy.Endpoint{
-				Family: proxy.FamilyIP,
-				Host:   tokens[0],
-				Port:   tokens[1],
-			},
-			Peer: proxy.Endpoint{
-				Family: proxy.FamilyIP,
-				Host:   tokens[2],
-				Port:   tokens[3],
-			},
-			Log: common.Component(fmt.Sprintf("/fwdproxy/proxy/%d", i+1)),
-		})
+	defer func() { err = errors.Join(err, cfg.Close()) }()
+	if cfg.Monitor != nil {
+		return fmt.Errorf("fwdproxy does not support a monitor")
 	}
+	for _, p := range cfg.Proxies {
+		if (p.Type != "tcp" && p.Type != "udp") || p.InterfaceCodec != nil || p.PeerCodec != nil {
+			return fmt.Errorf("fwdproxy only supports plain TCP/UDP proxies: %q", p.Name)
+		}
+	}
+	if !*verbose && !*quiet {
+		for _, mask := range cfg.LogMasks {
+			if err := common.Mask(mask.Regex, mask.Level); err != nil {
+				return err
+			}
+		}
+		if err := common.Mask(".?", cfg.LogLevel); err != nil {
+			return err
+		}
+	}
+	fleet := cfg.NewFleet(log)
 
 	if err := fleet.Start(); err != nil {
 		return err
 	}
 	for _, addr := range fleet.Addresses() {
-		fmt.Printf("proxy listening on %s:%d\n", addr.Address, addr.Port)
+		fmt.Printf("proxy listening on %s\n", net.JoinHostPort(addr.Address, strconv.Itoa(addr.Port)))
 	}
 
+	defer func() { err = errors.Join(err, fleet.Stop()) }()
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sig)
 	<-sig
 
 	log.Info("shutting down")
-	return fleet.Stop()
+	return nil
 }

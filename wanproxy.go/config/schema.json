@@ -1,0 +1,530 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "log": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "default": "info"
+        },
+        "masks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "regex": {
+                "type": "string",
+                "description": "Go regexp syntax; validated by the daemon."
+              },
+              "level": {
+                "enum": [
+                  "debug",
+                  "info",
+                  "warn",
+                  "error"
+                ]
+              }
+            },
+            "required": [
+              "regex",
+              "level"
+            ]
+          }
+        }
+      },
+      "required": []
+    },
+    "caches": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/cache"
+      }
+    },
+    "codecs": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/codec"
+      }
+    },
+    "proxies": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/proxy"
+      },
+      "description": "Names must be unique. Codec/cache references must exist. Cache hierarchies must be acyclic; these semantic checks run in the daemon."
+    },
+    "monitor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "listen": {
+          "$ref": "#/$defs/endpoint"
+        }
+      },
+      "required": [
+        "listen"
+      ]
+    }
+  },
+  "required": [
+    "proxies"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WANProxy Go configuration",
+  "description": "JSON-only daemon configuration. Relative paths resolve from the process working directory. UDP forwards complete datagrams to a fixed peer without stream codecs. SOCKS supports CONNECT.",
+  "$defs": {
+    "ipEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "enum": [
+            "ip",
+            "ipv4",
+            "ipv6"
+          ],
+          "default": "ip"
+        },
+        "host": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      },
+      "required": [
+        "host",
+        "port"
+      ]
+    },
+    "unixEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "const": "unix"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "family",
+        "path"
+      ]
+    },
+    "endpoint": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ipEndpoint"
+        },
+        {
+          "$ref": "#/$defs/unixEndpoint"
+        }
+      ]
+    },
+    "upstream": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/endpoint"
+        },
+        {
+          "if": {
+            "required": [
+              "port"
+            ]
+          },
+          "then": {
+            "properties": {
+              "port": {
+                "minimum": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "cache": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "memory"
+            },
+            "size": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)([KkMmGgTt]?[Bb])?$",
+              "description": "Bytes, optionally suffixed B/KB/MB/GB/TB (powers of 1024). Must fit signed int64. Zero selects the cache default / existing disk size."
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "disk"
+            },
+            "size": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)([KkMmGgTt]?[Bb])?$",
+              "description": "Bytes, optionally suffixed B/KB/MB/GB/TB (powers of 1024). Must fit signed int64. Zero selects the cache default / existing disk size."
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "type",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "pair"
+            },
+            "primary": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+            },
+            "secondary": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+            }
+          },
+          "required": [
+            "type",
+            "primary",
+            "secondary"
+          ]
+        }
+      ]
+    },
+    "codec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "none",
+            "zlib",
+            "xcodec",
+            "zlib+xcodec"
+          ]
+        },
+        "cache": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "compressorLevel": {
+          "type": "integer",
+          "minimum": -2,
+          "maximum": 9,
+          "default": -1
+        },
+        "trackStatistics": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "enum": [
+                  "xcodec",
+                  "zlib+xcodec"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "cache"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "cache"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "enum": [
+                  "none",
+                  "xcodec"
+                ]
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "compressorLevel"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "proxy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "type": {
+          "enum": [
+            "tcp",
+            "udp",
+            "ssh",
+            "socks"
+          ]
+        },
+        "listen": {
+          "$ref": "#/$defs/endpoint"
+        },
+        "upstream": {
+          "$ref": "#/$defs/upstream"
+        },
+        "interfaceCodec": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "peerCodec": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "hostKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "handshakeTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "default": 15
+        },
+        "idleTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "default": 60
+        },
+        "maxSessions": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536,
+          "default": 1024
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "listen"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "socks"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "upstream"
+                  ]
+                }
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "upstream"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "udp",
+                  "socks"
+                ]
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "interfaceCodec"
+                  ]
+                },
+                {
+                  "required": [
+                    "peerCodec"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ssh"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "hostKey"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "hostKey"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "tcp",
+                  "udp"
+                ]
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "handshakeTimeoutSeconds"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "udp"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "listen": {
+                "$ref": "#/$defs/ipEndpoint"
+              },
+              "upstream": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/ipEndpoint"
+                  },
+                  {
+                    "properties": {
+                      "port": {
+                        "minimum": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "idleTimeoutSeconds"
+                  ]
+                },
+                {
+                  "required": [
+                    "maxSessions"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

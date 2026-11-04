@@ -19,7 +19,7 @@ go run ./cmd/server          # or: make build && ./bin/wanproxy-srv
 
 First start builds `wanproxy.go/bin/{wanproxy,tack,xcdump}` via `make build`
 if missing, generates a demo-only SSH host key, and renders
-`demo/wanproxy.conf.template` into `data/wanproxy.conf`.
+`demo/wanproxy.example.json` into `data/wanproxy.json`.
 
 Environment overrides: `SRV_PORT` (3101), `MONITOR_PORT` (9901),
 `SSH_ECHO_PORT` (8349), `SRV_ROOT`.

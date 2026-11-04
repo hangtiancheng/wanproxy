@@ -1,11 +1,19 @@
 {
-  "monitor": {
-    "listen": { "host": "127.0.0.1", "port": 8402 }
-  },
-  "socksProxies": [
+  "$schema": "../config/schema.json",
+  "proxies": [
     {
-      "listen": { "host": "127.0.0.1", "port": 8320 },
-      "name": "socks-demo"
+      "name": "socks-demo",
+      "type": "socks",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8320
+      }
     }
-  ]
+  ],
+  "monitor": {
+    "listen": {
+      "host": "127.0.0.1",
+      "port": 8402
+    }
+  }
 }

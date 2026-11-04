@@ -19,7 +19,7 @@ func TestExampleJSONConfigsLoad(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ParseJSON(data); err != nil {
+		if _, err := Parse(data); err != nil {
 			t.Fatalf("%s: %v", entry.Name(), err)
 		}
 	}

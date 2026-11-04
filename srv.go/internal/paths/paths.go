@@ -22,14 +22,14 @@ var REPO_ROOT = filepath.Dir(SRV_ROOT)
 var WANPROXY_GO_ROOT = filepath.Join(REPO_ROOT, "wanproxy.go")
 
 var (
-	DataDir      = filepath.Join(SRV_ROOT, "data")
-	FilesDir     = filepath.Join(DataDir, "files")
-	ToolsDir     = filepath.Join(DataDir, "tools")
-	MetaPath     = filepath.Join(DataDir, "files.json")
-	ConfigPath   = filepath.Join(DataDir, "wanproxy.conf")
-	HostKeyPath  = filepath.Join(DataDir, "ssh-hostkey.pem")
-	XCachePath   = filepath.Join(DataDir, "wanproxy.xcache")
-	TemplatePath = filepath.Join(SRV_ROOT, "demo", "wanproxy.conf.template")
+	DataDir           = filepath.Join(SRV_ROOT, "data")
+	FilesDir          = filepath.Join(DataDir, "files")
+	ToolsDir          = filepath.Join(DataDir, "tools")
+	MetaPath          = filepath.Join(DataDir, "files.json")
+	ConfigPath        = filepath.Join(DataDir, "wanproxy.json")
+	HostKeyPath       = filepath.Join(DataDir, "ssh-hostkey.pem")
+	XCachePath        = filepath.Join(DataDir, "wanproxy.xcache")
+	ExampleConfigPath = filepath.Join(SRV_ROOT, "demo", "wanproxy.example.json")
 
 	WanproxyBin = binPath("wanproxy")
 	TackBin     = binPath("tack")
@@ -85,7 +85,7 @@ func walkUp(dir string) string {
 }
 
 func looksLikeRoot(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, "demo", "wanproxy.conf.template"))
+	_, err := os.Stat(filepath.Join(dir, "demo", "wanproxy.example.json"))
 	return err == nil
 }
 
