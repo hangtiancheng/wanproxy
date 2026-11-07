@@ -1,0 +1,31 @@
+{
+  "proxies": [
+    {
+      "name": "udp",
+      "type": "tcp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 0
+      },
+      "upstream": {
+        "host": "localhost",
+        "port": 53
+      },
+      "peerCodec": "wan"
+    }
+  ],
+  "caches": {
+    "memory": {
+      "type": "memory",
+      "size": "1MB"
+    }
+  },
+  "codecs": {
+    "wan": {
+      "mode": "zlib+xcodec",
+      "cache": "memory",
+      "compressorLevel": -2,
+      "trackStatistics": true
+    }
+  }
+}

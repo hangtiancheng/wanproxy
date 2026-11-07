@@ -1,0 +1,19 @@
+{
+  "$schema": "../config/schema.json",
+  "proxies": [
+    {
+      "name": "socks-demo",
+      "type": "socks",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8320
+      }
+    }
+  ],
+  "monitor": {
+    "listen": {
+      "host": "127.0.0.1",
+      "port": 8402
+    }
+  }
+}

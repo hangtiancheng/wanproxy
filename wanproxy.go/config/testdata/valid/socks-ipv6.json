@@ -1,0 +1,14 @@
+{
+  "proxies": [
+    {
+      "name": "socks",
+      "type": "socks",
+      "listen": {
+        "family": "ipv6",
+        "host": "::1",
+        "port": 0
+      },
+      "handshakeTimeoutSeconds": 15
+    }
+  ]
+}

@@ -1,0 +1,202 @@
+{
+  "$schema": "../../wanproxy.go/config/schema.json",
+  "log": {
+    "level": "info"
+  },
+  "caches": {
+    "memorycache0": {
+      "type": "memory",
+      "size": "256MB"
+    },
+    "diskcache0": {
+      "type": "disk",
+      "size": "1GB",
+      "path": "wanproxy.xcache"
+    },
+    "cache0": {
+      "type": "pair",
+      "primary": "memorycache0",
+      "secondary": "diskcache0"
+    }
+  },
+  "codecs": {
+    "wan-a": {
+      "mode": "zlib+xcodec",
+      "trackStatistics": true,
+      "cache": "cache0",
+      "compressorLevel": 6
+    },
+    "wan-b": {
+      "mode": "zlib+xcodec",
+      "trackStatistics": true,
+      "cache": "cache0",
+      "compressorLevel": 6
+    },
+    "zlib-only": {
+      "mode": "zlib",
+      "trackStatistics": true,
+      "compressorLevel": 6
+    },
+    "xcodec-only": {
+      "mode": "xcodec",
+      "trackStatistics": true,
+      "cache": "cache0"
+    },
+    "zlib-b": {
+      "mode": "zlib",
+      "trackStatistics": true,
+      "compressorLevel": 6
+    },
+    "xcodec-b": {
+      "mode": "xcodec",
+      "trackStatistics": true,
+      "cache": "cache0"
+    },
+    "ssh-a": {
+      "mode": "zlib+xcodec",
+      "trackStatistics": true,
+      "cache": "cache0",
+      "compressorLevel": 6
+    },
+    "ssh-b": {
+      "mode": "zlib+xcodec",
+      "trackStatistics": true,
+      "cache": "cache0",
+      "compressorLevel": 6
+    }
+  },
+  "proxies": [
+    {
+      "name": "proxy-passthrough",
+      "type": "tcp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8310
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 3101
+      }
+    },
+    {
+      "name": "proxy-zlib",
+      "type": "tcp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8311
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 8351
+      },
+      "peerCodec": "zlib-only"
+    },
+    {
+      "name": "proxy-xcodec",
+      "type": "tcp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8312
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 8352
+      },
+      "peerCodec": "xcodec-only"
+    },
+    {
+      "name": "proxy-zlib-b",
+      "type": "tcp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8351
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 3101
+      },
+      "interfaceCodec": "zlib-b"
+    },
+    {
+      "name": "proxy-xcodec-b",
+      "type": "tcp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8352
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 3101
+      },
+      "interfaceCodec": "xcodec-b"
+    },
+    {
+      "name": "proxy-wan-a",
+      "type": "tcp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8320
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 8321
+      },
+      "peerCodec": "wan-a"
+    },
+    {
+      "name": "proxy-wan-b",
+      "type": "tcp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8321
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 3101
+      },
+      "interfaceCodec": "wan-b"
+    },
+    {
+      "name": "proxy-socks",
+      "type": "socks",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8330
+      }
+    },
+    {
+      "name": "proxy-ssh-a",
+      "type": "ssh",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8340
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 8341
+      },
+      "peerCodec": "ssh-a",
+      "hostKey": "ssh-hostkey.pem"
+    },
+    {
+      "name": "proxy-ssh-b",
+      "type": "ssh",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8341
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 8349
+      },
+      "interfaceCodec": "ssh-b",
+      "hostKey": "ssh-hostkey.pem"
+    }
+  ],
+  "monitor": {
+    "listen": {
+      "host": "127.0.0.1",
+      "port": 9901
+    }
+  }
+}

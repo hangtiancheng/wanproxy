@@ -1,0 +1,11 @@
+{
+  "socksProxies": [
+    {
+      "name": "socks",
+      "listen": {
+        "host": "localhost",
+        "port": 0
+      }
+    }
+  ]
+}

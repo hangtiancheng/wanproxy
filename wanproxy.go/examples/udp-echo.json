@@ -1,0 +1,25 @@
+{
+  "$schema": "../config/schema.json",
+  "proxies": [
+    {
+      "name": "udp-echo",
+      "type": "udp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 8300
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 8301
+      },
+      "idleTimeoutSeconds": 60,
+      "maxSessions": 1024
+    }
+  ],
+  "monitor": {
+    "listen": {
+      "host": "127.0.0.1",
+      "port": 8404
+    }
+  }
+}

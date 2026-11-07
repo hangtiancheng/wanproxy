@@ -1,0 +1,17 @@
+{
+  "proxies": [
+    {
+      "name": "udp",
+      "type": "udp",
+      "listen": {
+        "family": "",
+        "host": "localhost",
+        "port": 0
+      },
+      "upstream": {
+        "host": "localhost",
+        "port": 53
+      }
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "$schema": "./config/schema.json",
+  "log": {
+    "level": "info",
+    "masks": [
+      {
+        "regex": "^/xcodec",
+        "level": "warn"
+      }
+    ]
+  },
+  "caches": {
+    "memory": {
+      "type": "memory",
+      "size": "128MB"
+    },
+    "disk": {
+      "type": "disk",
+      "size": "1GB",
+      "path": "wanproxy.xcache"
+    },
+    "shared": {
+      "type": "pair",
+      "primary": "memory",
+      "secondary": "disk"
+    }
+  },
+  "codecs": {
+    "encode": {
+      "mode": "zlib+xcodec",
+      "cache": "shared",
+      "compressorLevel": 6,
+      "trackStatistics": true
+    },
+    "decode": {
+      "mode": "zlib+xcodec",
+      "cache": "shared",
+      "compressorLevel": 6,
+      "trackStatistics": true
+    }
+  },
+  "proxies": [
+    {
+      "name": "client-side",
+      "type": "tcp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 3300
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 3301
+      },
+      "peerCodec": "encode"
+    },
+    {
+      "name": "server-side",
+      "type": "tcp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 3301
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 3302
+      },
+      "interfaceCodec": "decode"
+    },
+    {
+      "name": "socks",
+      "type": "socks",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 3302
+      }
+    },
+    {
+      "name": "udp",
+      "type": "udp",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 5300
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 53
+      }
+    }
+  ],
+  "monitor": {
+    "listen": {
+      "host": "127.0.0.1",
+      "port": 9900
+    }
+  }
+}

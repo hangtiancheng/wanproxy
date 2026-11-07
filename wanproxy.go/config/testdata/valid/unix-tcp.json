@@ -1,0 +1,16 @@
+{
+  "proxies": [
+    {
+      "name": "unix",
+      "type": "tcp",
+      "listen": {
+        "family": "unix",
+        "path": "/tmp/wanproxy.sock"
+      },
+      "upstream": {
+        "family": "unix",
+        "path": "/tmp/upstream.sock"
+      }
+    }
+  ]
+}
