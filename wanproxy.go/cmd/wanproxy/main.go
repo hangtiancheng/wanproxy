@@ -52,8 +52,7 @@ func run() (err error) {
 
 	log := common.Component("/wanproxy")
 
-	log.Info("WANProxy (Go port)")
-	log.Info("Copyright (c) 2008-2016 WANProxy.org. All rights reserved.")
+	log.Info("WANProxy")
 
 	switch {
 	case *verbose:

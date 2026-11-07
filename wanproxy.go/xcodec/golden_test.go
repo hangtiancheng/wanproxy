@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-
 func mustHex(t *testing.T, s string) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(s)

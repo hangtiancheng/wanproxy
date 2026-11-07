@@ -10,12 +10,7 @@
       "additionalProperties": false,
       "properties": {
         "level": {
-          "enum": [
-            "debug",
-            "info",
-            "warn",
-            "error"
-          ],
+          "enum": ["debug", "info", "warn", "error"],
           "default": "info"
         },
         "masks": {
@@ -29,18 +24,10 @@
                 "description": "Go regexp syntax; validated by the daemon."
               },
               "level": {
-                "enum": [
-                  "debug",
-                  "info",
-                  "warn",
-                  "error"
-                ]
+                "enum": ["debug", "info", "warn", "error"]
               }
             },
-            "required": [
-              "regex",
-              "level"
-            ]
+            "required": ["regex", "level"]
           }
         }
       },
@@ -82,14 +69,10 @@
           "$ref": "#/$defs/endpoint"
         }
       },
-      "required": [
-        "listen"
-      ]
+      "required": ["listen"]
     }
   },
-  "required": [
-    "proxies"
-  ],
+  "required": ["proxies"],
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "WANProxy Go configuration",
   "description": "JSON-only daemon configuration. Relative paths resolve from the process working directory. UDP forwards complete datagrams to a fixed peer without stream codecs. SOCKS supports CONNECT.",
@@ -99,11 +82,7 @@
       "additionalProperties": false,
       "properties": {
         "family": {
-          "enum": [
-            "ip",
-            "ipv4",
-            "ipv6"
-          ],
+          "enum": ["ip", "ipv4", "ipv6"],
           "default": "ip"
         },
         "host": {
@@ -116,10 +95,7 @@
           "maximum": 65535
         }
       },
-      "required": [
-        "host",
-        "port"
-      ]
+      "required": ["host", "port"]
     },
     "unixEndpoint": {
       "type": "object",
@@ -133,10 +109,7 @@
           "minLength": 1
         }
       },
-      "required": [
-        "family",
-        "path"
-      ]
+      "required": ["family", "path"]
     },
     "endpoint": {
       "oneOf": [
@@ -155,9 +128,7 @@
         },
         {
           "if": {
-            "required": [
-              "port"
-            ]
+            "required": ["port"]
           },
           "then": {
             "properties": {
@@ -184,9 +155,7 @@
               "description": "Bytes, optionally suffixed B/KB/MB/GB/TB (powers of 1024). Must fit signed int64. Zero selects the cache default / existing disk size."
             }
           },
-          "required": [
-            "type"
-          ]
+          "required": ["type"]
         },
         {
           "type": "object",
@@ -205,10 +174,7 @@
               "minLength": 1
             }
           },
-          "required": [
-            "type",
-            "path"
-          ]
+          "required": ["type", "path"]
         },
         {
           "type": "object",
@@ -226,11 +192,7 @@
               "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
             }
           },
-          "required": [
-            "type",
-            "primary",
-            "secondary"
-          ]
+          "required": ["type", "primary", "secondary"]
         }
       ]
     },
@@ -239,12 +201,7 @@
       "additionalProperties": false,
       "properties": {
         "mode": {
-          "enum": [
-            "none",
-            "zlib",
-            "xcodec",
-            "zlib+xcodec"
-          ]
+          "enum": ["none", "zlib", "xcodec", "zlib+xcodec"]
         },
         "cache": {
           "type": "string",
@@ -261,33 +218,24 @@
           "default": false
         }
       },
-      "required": [
-        "mode"
-      ],
+      "required": ["mode"],
       "allOf": [
         {
           "if": {
             "properties": {
               "mode": {
-                "enum": [
-                  "xcodec",
-                  "zlib+xcodec"
-                ]
+                "enum": ["xcodec", "zlib+xcodec"]
               }
             }
           },
           "then": {
-            "required": [
-              "cache"
-            ]
+            "required": ["cache"]
           },
           "else": {
             "not": {
               "anyOf": [
                 {
-                  "required": [
-                    "cache"
-                  ]
+                  "required": ["cache"]
                 }
               ]
             }
@@ -297,10 +245,7 @@
           "if": {
             "properties": {
               "mode": {
-                "enum": [
-                  "none",
-                  "xcodec"
-                ]
+                "enum": ["none", "xcodec"]
               }
             }
           },
@@ -308,9 +253,7 @@
             "not": {
               "anyOf": [
                 {
-                  "required": [
-                    "compressorLevel"
-                  ]
+                  "required": ["compressorLevel"]
                 }
               ]
             }
@@ -327,12 +270,7 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
         },
         "type": {
-          "enum": [
-            "tcp",
-            "udp",
-            "ssh",
-            "socks"
-          ]
+          "enum": ["tcp", "udp", "ssh", "socks"]
         },
         "listen": {
           "$ref": "#/$defs/endpoint"
@@ -371,11 +309,7 @@
           "default": 1024
         }
       },
-      "required": [
-        "name",
-        "type",
-        "listen"
-      ],
+      "required": ["name", "type", "listen"],
       "allOf": [
         {
           "if": {
@@ -389,27 +323,20 @@
             "not": {
               "anyOf": [
                 {
-                  "required": [
-                    "upstream"
-                  ]
+                  "required": ["upstream"]
                 }
               ]
             }
           },
           "else": {
-            "required": [
-              "upstream"
-            ]
+            "required": ["upstream"]
           }
         },
         {
           "if": {
             "properties": {
               "type": {
-                "enum": [
-                  "udp",
-                  "socks"
-                ]
+                "enum": ["udp", "socks"]
               }
             }
           },
@@ -417,14 +344,10 @@
             "not": {
               "anyOf": [
                 {
-                  "required": [
-                    "interfaceCodec"
-                  ]
+                  "required": ["interfaceCodec"]
                 },
                 {
-                  "required": [
-                    "peerCodec"
-                  ]
+                  "required": ["peerCodec"]
                 }
               ]
             }
@@ -439,17 +362,13 @@
             }
           },
           "then": {
-            "required": [
-              "hostKey"
-            ]
+            "required": ["hostKey"]
           },
           "else": {
             "not": {
               "anyOf": [
                 {
-                  "required": [
-                    "hostKey"
-                  ]
+                  "required": ["hostKey"]
                 }
               ]
             }
@@ -459,10 +378,7 @@
           "if": {
             "properties": {
               "type": {
-                "enum": [
-                  "tcp",
-                  "udp"
-                ]
+                "enum": ["tcp", "udp"]
               }
             }
           },
@@ -470,9 +386,7 @@
             "not": {
               "anyOf": [
                 {
-                  "required": [
-                    "handshakeTimeoutSeconds"
-                  ]
+                  "required": ["handshakeTimeoutSeconds"]
                 }
               ]
             }
@@ -511,14 +425,10 @@
             "not": {
               "anyOf": [
                 {
-                  "required": [
-                    "idleTimeoutSeconds"
-                  ]
+                  "required": ["idleTimeoutSeconds"]
                 },
                 {
-                  "required": [
-                    "maxSessions"
-                  ]
+                  "required": ["maxSessions"]
                 }
               ]
             }

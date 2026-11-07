@@ -1,1 +1,9 @@
-{"Proxies":[{"name":"s","type":"socks","listen":{"host":"localhost","port":0}}]}
+{
+  "Proxies": [
+    {
+      "name": "s",
+      "type": "socks",
+      "listen": { "host": "localhost", "port": 0 }
+    }
+  ]
+}

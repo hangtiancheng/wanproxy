@@ -185,7 +185,6 @@ func firstByte(p []byte) byte {
 	return p[0]
 }
 
-
 func (t *Transport) readVersionLine() ([]byte, error) {
 	var line []byte
 	lines := 0
@@ -215,7 +214,6 @@ func (t *Transport) readVersionLine() ([]byte, error) {
 		}
 	}
 }
-
 
 func (t *Transport) buildKexinit() []byte {
 	cookie := make([]byte, 16)
@@ -412,7 +410,6 @@ func (t *Transport) negotiate(peerKexinit []byte) error {
 
 	return nil
 }
-
 
 func (t *Transport) runKeyExchange() error {
 	dh := &dhState{}
@@ -619,7 +616,6 @@ func (t *Transport) finishKeyExchange(dh *dhState, serverHostKeyBlob []byte) {
 	t.sharedSecret = k
 }
 
-
 func (t *Transport) activateSend() error {
 	var ivLetter, keyLetter, macLetter byte
 	var encAlg encryptionAlgorithm
@@ -674,7 +670,6 @@ func (t *Transport) activateRecv() error {
 	t.recvActivated = true
 	return nil
 }
-
 
 func (t *Transport) writeAll(p []byte) error {
 	for len(p) > 0 {
@@ -831,7 +826,6 @@ func (t *Transport) readPacket() ([]byte, error) {
 		return payload, nil
 	}
 }
-
 
 func (t *Transport) deliverApp(payload []byte) error {
 	if t.cfg.Tagged {

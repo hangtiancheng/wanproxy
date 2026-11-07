@@ -14,11 +14,11 @@ import (
 )
 
 type SocksListener struct {
-	Name        string
-	Iface       Endpoint
-	Log         *slog.Logger
-	DialContext func(context.Context, string, string) (net.Conn, error)
-	Dial func(network, addr string) (net.Conn, error)
+	Name             string
+	Iface            Endpoint
+	Log              *slog.Logger
+	DialContext      func(context.Context, string, string) (net.Conn, error)
+	Dial             func(network, addr string) (net.Conn, error)
 	HandshakeTimeout time.Duration
 
 	listenerState

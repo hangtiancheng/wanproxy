@@ -1,14 +1,13 @@
 # WANProxy workspace
 
-This workspace holds the Go port of
-[WANProxy](https://github.com/wanproxy/wanproxy) plus the demo backend and the
-web front-end that drives it.
+This workspace holds the Go WAN optimization proxy, the demo backend and
+the web front-end that drives it.
 
-| Directory      | What it is                                                                                                                                                                                                                          |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wanproxy.go/` | **Go proxy port** — xcodec dedup codec, pipe protocol, zlib, SSH transport, XCDFS disk cache, TCP/UDP/SOCKS/SSH proxies, JSON configuration and schema, monitor, `tack`/`xcdump`/`fwdproxy` tools. Built on the Go standard library.                     |
-| `srv.go/`      | **Go SRV** (yukino_http) — spawns the wanproxy.go fleet and SSH echo, and serves the file/monitor/bench/experiment/tools APIs.                                                                                                       |
-| `web/`         | React + TailwindCSS demo front-end.                                                                                                                                                                                                  |
+| Directory      | What it is                                                                                                                                                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wanproxy.go/` | **Go proxy** — xcodec dedup codec, pipe protocol, zlib, SSH transport, XCDFS disk cache, TCP/UDP/SOCKS/SSH proxies, JSON configuration and schema, monitor, `tack`/`xcdump`/`fwdproxy` tools. Built on the Go standard library. |
+| `srv.go/`      | **Go SRV** (yukino_http) — spawns the wanproxy.go fleet and SSH echo, and serves the file/monitor/bench/experiment/tools APIs.                                                                                                  |
+| `web/`         | React + TailwindCSS demo front-end.                                                                                                                                                                                             |
 
 ## Demo quickstart
 
@@ -48,7 +47,7 @@ plus an SSH echo server on `:8349`.
   chain show xcodec deduplication collapsing megabytes of application
   bytes into kilobytes on the wire.
 - **Inspector** — frame-level analysis of captured XCDFS streams using
-  the ported `tack` and `xcdump` tools.
+  the `tack` and `xcdump` tools.
 
 The demo covers every scenario end to end — direct / passthrough / zlib /
 xcodec / WAN / SOCKS / SSH chain — with timing, throughput, SHA-256
@@ -68,11 +67,10 @@ experiments report real wire savings.
 | 8340 → 8341        | SSH transport chain (ssh-a → ssh-b)            |
 | 8349               | SSH echo server (wanbench)                     |
 
-## Port details
+## Component details
 
-- Go proxy: [`wanproxy.go/README.md`](wanproxy.go/README.md) — package layout
-  (C++ → Go migration map), parity evidence (KAT vectors and golden
-  snapshots), pipeline mapping, and deviation notes.
+- Go proxy: [`wanproxy.go/README.md`](wanproxy.go/README.md) — package layout,
+  configuration and schema, architecture, and verification.
 - Go SRV: [`srv.go/README.md`](srv.go/README.md) — the HTTP API, demo fleet
   lifecycle, and benchmark/experiment orchestration.
 - Web dashboard: [`web/README.md`](web/README.md) — pages, development

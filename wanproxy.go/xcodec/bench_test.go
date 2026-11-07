@@ -5,9 +5,7 @@ import (
 	"testing"
 )
 
-
 var benchSinkHash uint64
-
 
 func BenchmarkHashRoll(b *testing.B) {
 	data := deterministicBytes(64 * 1024)

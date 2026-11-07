@@ -19,15 +19,15 @@ type SSHSettings struct {
 }
 
 type Listener struct {
-	Name       string
-	Iface      Endpoint
-	Peer       Endpoint
-	IfaceCodec *pipeline.CodecSpec
-	PeerCodec  *pipeline.CodecSpec
-	SSH        *SSHSettings
-	Log        *slog.Logger
+	Name        string
+	Iface       Endpoint
+	Peer        Endpoint
+	IfaceCodec  *pipeline.CodecSpec
+	PeerCodec   *pipeline.CodecSpec
+	SSH         *SSHSettings
+	Log         *slog.Logger
 	DialContext func(context.Context, string, string) (net.Conn, error)
-	Dial func(network, addr string) (net.Conn, error)
+	Dial        func(network, addr string) (net.Conn, error)
 
 	listenerState
 }

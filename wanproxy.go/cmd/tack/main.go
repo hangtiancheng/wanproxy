@@ -23,7 +23,7 @@ const (
 )
 
 const (
-	flagQuietOutput   = 1 << iota
+	flagQuietOutput = 1 << iota
 	flagCodecTiming
 	flagByteStats
 	flagTimingEach

@@ -66,7 +66,6 @@ func New(f *files.Service, m *monitor.Service, b *benchsvc.Service, t *tools.Ser
 	return app
 }
 
-
 func httpLog(ctx *yukino.Context, next func()) {
 	start := time.Now()
 	next()
@@ -98,11 +97,9 @@ func errJSON(ctx *yukino.Context, status int, msg string) {
 	ctx.JSON(yukino.H{"error": msg})
 }
 
-
 func (s *Server) root(ctx *yukino.Context, next func()) {
 	ctx.JSON(yukino.H{"service": "wanproxy-server", "status": "ok"})
 }
-
 
 func (s *Server) listFiles(ctx *yukino.Context, next func()) {
 	ctx.JSON(s.files.List())
@@ -251,7 +248,6 @@ func (s *Server) content(ctx *yukino.Context, next func()) {
 	_, _ = io.Copy(w, f)
 }
 
-
 func (s *Server) monitorStatus(ctx *yukino.Context, next func()) {
 	raw, err := s.monitor.StatusRaw()
 	if err != nil {
@@ -266,7 +262,6 @@ func (s *Server) monitorStatus(ctx *yukino.Context, next func()) {
 func (s *Server) scenarios(ctx *yukino.Context, next func()) {
 	ctx.JSON(monitor.Scenarios())
 }
-
 
 func (s *Server) benchRun(ctx *yukino.Context, next func()) {
 	var req benchsvc.Request
@@ -371,7 +366,6 @@ func (s *Server) source(ctx *yukino.Context, next func()) {
 	_, _ = io.Copy(ctx.Writer, payload.NewReader(pattern, size, seed))
 }
 
-
 func (s *Server) analyze(ctx *yukino.Context, next func()) {
 	var body struct {
 		FileID string `json:"fileId"`
@@ -391,7 +385,6 @@ func (s *Server) analyze(ctx *yukino.Context, next func()) {
 	}
 	ctx.JSON(result)
 }
-
 
 func encodeURIComponent(s string) string {
 	var b strings.Builder

@@ -92,8 +92,7 @@ export function Files() {
     try {
       const fs = await api.files();
       setFiles(fs);
-    } catch {
-    }
+    } catch {}
   }, []);
   useEffect(() => {
     let alive = true;
@@ -102,8 +101,7 @@ export function Files() {
       .then((fs) => {
         if (alive) setFiles(fs);
       })
-      .catch(() => {
-      });
+      .catch(() => {});
     return () => {
       alive = false;
     };

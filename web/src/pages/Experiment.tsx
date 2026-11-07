@@ -256,7 +256,6 @@ export function Experiment() {
     }
   };
 
-
   const armConfig = useMemo<ChartConfig>(() => {
     if (!report) return {};
     return Object.fromEntries(

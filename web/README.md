@@ -3,7 +3,7 @@
 React dashboard for the wanproxy.go WAN optimization proxy demo. It visualizes
 the live proxy fleet, runs multi-arm A/B experiments and protocol benchmarks
 (HTTP / SOCKS5 / SSH), drives file transfers through selectable proxy chains,
-and inspects XCodec frame composition with the original C++ toolchain.
+and inspects XCodec frame composition with the `tack` and `xcdump` tools.
 
 ## Pages
 

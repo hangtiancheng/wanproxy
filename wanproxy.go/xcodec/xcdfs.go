@@ -218,7 +218,6 @@ func (d *Disk) appendIndexCounter() {
 	d.indexBlockNext = 0
 }
 
-
 func (d *Disk) blockRead(blockno uint64) ([]byte, error) {
 	if blockno >= d.diskBlocks {
 		return nil, fmt.Errorf("block %d out of range", blockno)
@@ -249,7 +248,6 @@ func (d *Disk) dataBlockAddress(indexBlock uint64, entry int) uint64 {
 	return xcdfsRegistryBlocks + d.indexBlocks +
 		(indexBlock * xcdfsEntriesPerIndexBlock) + uint64(entry)
 }
-
 
 func (d *Disk) registryLoad() error {
 	for r := 0; r < xcdfsRegistryBlocks; r++ {
@@ -332,7 +330,6 @@ func (d *Disk) registryCollect() error {
 	}
 	return nil
 }
-
 
 func (d *Disk) indexReadCounter(indexBlock uint64) (uint64, error) {
 	block, err := d.blockRead(d.indexBlockAddress(indexBlock))
@@ -428,7 +425,6 @@ func (d *Disk) indexInvalidateEntries(indexBlock uint64) error {
 	}
 	return nil
 }
-
 
 func (d *Disk) enter(cache *DiskCache, hash uint64, seg []byte) (err error) {
 	if d.writeErr != nil {
@@ -529,7 +525,6 @@ func (d *Disk) allocXUID() (uint16, error) {
 	return xuid, nil
 }
 
-
 func (d *Disk) Local() *DiskCache {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -565,7 +560,6 @@ func (d *Disk) Sync() error {
 	defer d.mu.Unlock()
 	return d.file.Sync()
 }
-
 
 func (c *DiskCache) Lookup(hash uint64) []byte {
 	d := c.disk

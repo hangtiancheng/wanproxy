@@ -1,10 +1,9 @@
 # wanproxy.go
 
-A Go rewrite of [WANProxy](https://github.com/wanproxy/wanproxy), built on
-Go's standard library. It includes XCodec deduplication, zlib composition,
-SSH transport, XCDFS disk caches, TCP/UDP forwarding, SOCKS4/5 CONNECT,
-monitoring, and the `tack`, `xcdump`, `fwdproxy` and `diskdup` tools.
-The legacy C++ tree is independent of this Go project.
+A Go WAN optimization proxy built on Go's standard library. It includes
+XCodec deduplication, zlib composition, SSH transport, XCDFS disk caches,
+TCP/UDP forwarding, SOCKS4/5 CONNECT, monitoring, and the `tack`, `xcdump`,
+`fwdproxy` and `diskdup` tools.
 
 ## Build and run
 
@@ -16,10 +15,8 @@ go run ./cmd/wanproxy -c examples/udp-echo.json
 go run ./cmd/wanproxy -c wanproxy.example.json
 ```
 
-Configuration is **JSON only**. The directive language (`create`, `set`,
-`activate`), format detection and old inline-codec JSON layout have been
-removed. All listeners belong to one `proxies` array and have an explicit
-`type`: `tcp`, `udp`, `ssh` or `socks`.
+Configuration is **JSON only**. All listeners belong to one `proxies` array
+and have an explicit `type`: `tcp`, `udp`, `ssh` or `socks`.
 
 ## JSON configuration and schema
 
@@ -51,15 +48,15 @@ Go regular expressions, cache size overflow and SSH key files. It rejects
 null values, duplicate JSON properties and trailing content. It does not
 fetch the `$schema` URI or depend on a schema library at runtime.
 
-| Section | Configuration |
-|---|---|
-| `proxies` | Nonempty array; each entry requires a unique `name`, `type` and `listen`. TCP, UDP and SSH also require `upstream`. |
-| Endpoint | `host` and integer `port`; optional `family`: `ip` (default), `ipv4`, `ipv6`. Listen port `0` requests an ephemeral port; upstream ports must be `1..65535`. |
-| Unix endpoint | `{"family":"unix","path":"/tmp/proxy.sock"}`; supported by stream listeners and the monitor. UDP requires IP endpoints. |
-| `caches` | Map of named `memory`, `disk` and `pair` caches. |
-| `codecs` | Map of named stream codecs; proxies reference them with `interfaceCodec` and `peerCodec`. |
-| `log` | `level`: `debug`, `info` (default), `warn`, `error`; optional ordered `masks` with `regex` and `level`. First matching mask wins, then the default level applies. `-q`/`-v` override file logging. |
-| `monitor` | Optional object containing a `listen` endpoint. |
+| Section       | Configuration                                                                                                                                                                                      |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `proxies`     | Nonempty array; each entry requires a unique `name`, `type` and `listen`. TCP, UDP and SSH also require `upstream`.                                                                                |
+| Endpoint      | `host` and integer `port`; optional `family`: `ip` (default), `ipv4`, `ipv6`. Listen port `0` requests an ephemeral port; upstream ports must be `1..65535`.                                       |
+| Unix endpoint | `{"family":"unix","path":"/tmp/proxy.sock"}`; supported by stream listeners and the monitor. UDP requires IP endpoints.                                                                            |
+| `caches`      | Map of named `memory`, `disk` and `pair` caches.                                                                                                                                                   |
+| `codecs`      | Map of named stream codecs; proxies reference them with `interfaceCodec` and `peerCodec`.                                                                                                          |
+| `log`         | `level`: `debug`, `info` (default), `warn`, `error`; optional ordered `masks` with `regex` and `level`. First matching mask wins, then the default level applies. `-q`/`-v` override file logging. |
+| `monitor`     | Optional object containing a `listen` endpoint.                                                                                                                                                    |
 
 Names use letters, digits, `.`, `_` and `-`, beginning with a letter or
 digit. Paths for disk caches, Unix sockets and SSH keys resolve relative
@@ -190,7 +187,7 @@ unacknowledged frames; receive buffers and relay queues have 16 MiB
 limits. These are per-buffer limits, not a process memory budget.
 Default outbound dialing has a 30-second timeout.
 
-Tests cover the original C++ hash known-answer vectors, exact wire
+Tests cover hash known-answer vectors, exact wire
 frames, cache lifecycle and corruption checks, codec chains and SSH
 handshakes. Daemon end-to-end tests exercise JSON-configured TCP/SOCKS,
 SSH and UDP topologies, including monitored codec reduction and UDP
@@ -207,5 +204,4 @@ make schema
 
 Schema tests validate the schema itself, all example configurations and
 fixtures shared with the Go parser tests. The daemon has no third-party
-runtime dependencies. The legacy wire format remains the algorithmic
-reference; C++ SSH interoperability is a separate validation target.
+runtime dependencies.

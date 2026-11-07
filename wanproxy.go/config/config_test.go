@@ -100,19 +100,19 @@ func TestCompleteJSONConfig(t *testing.T) {
 
 func TestJSONErrors(t *testing.T) {
 	for name, input := range map[string]string{
-		"classic":       "create proxy p\nactivate p",
-		"old JSON":      `{"socksProxies":[{"name":"s","listen":{"host":"localhost","port":0}}]}`,
-		"empty":         `{}`,
-		"null":          "null",
-		"array":         "[]",
-		"unknown":       strings.Replace(minimalConfig, `"type":"socks"`, `"type":"socks","bogus":true`, 1),
-		"missing port":  strings.Replace(minimalConfig, `,"port":0`, "", 1),
-		"null port":     strings.Replace(minimalConfig, `"port":0`, `"port":null`, 1),
-		"duplicate key": strings.Replace(minimalConfig, `"type":"socks"`, `"type":"tcp","type":"socks"`, 1),
-		"trailing":      minimalConfig + `{}`,
-		"bad log level": strings.Replace(minimalConfig, `{"proxies"`, `{"log":{"level":"DEBUG"},"proxies"`, 1),
-		"bad regex":     strings.Replace(minimalConfig, `{"proxies"`, `{"log":{"masks":[{"regex":"[","level":"info"}]},"proxies"`, 1),
-		"missing regex": strings.Replace(minimalConfig, `{"proxies"`, `{"log":{"masks":[{"level":"info"}]},"proxies"`, 1),
+		"non-JSON":          "create proxy p\nactivate p",
+		"unknown top-level": `{"socksProxies":[{"name":"s","listen":{"host":"localhost","port":0}}]}`,
+		"empty":             `{}`,
+		"null":              "null",
+		"array":             "[]",
+		"unknown":           strings.Replace(minimalConfig, `"type":"socks"`, `"type":"socks","bogus":true`, 1),
+		"missing port":      strings.Replace(minimalConfig, `,"port":0`, "", 1),
+		"null port":         strings.Replace(minimalConfig, `"port":0`, `"port":null`, 1),
+		"duplicate key":     strings.Replace(minimalConfig, `"type":"socks"`, `"type":"tcp","type":"socks"`, 1),
+		"trailing":          minimalConfig + `{}`,
+		"bad log level":     strings.Replace(minimalConfig, `{"proxies"`, `{"log":{"level":"DEBUG"},"proxies"`, 1),
+		"bad regex":         strings.Replace(minimalConfig, `{"proxies"`, `{"log":{"masks":[{"regex":"[","level":"info"}]},"proxies"`, 1),
+		"missing regex":     strings.Replace(minimalConfig, `{"proxies"`, `{"log":{"masks":[{"level":"info"}]},"proxies"`, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if cfg, err := Parse([]byte(input)); err == nil {
@@ -193,7 +193,7 @@ func TestLoadJSONOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := Load(path); err == nil {
-		t.Fatal("accepted classic configuration")
+		t.Fatal("accepted non-JSON configuration")
 	}
 }
 

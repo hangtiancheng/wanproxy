@@ -173,7 +173,6 @@ target
 **/.yukino/
 
 .playwright-cli/
-/wanproxy/
 srv.go/data
 
 tsconfig.build.tsbuildinfo

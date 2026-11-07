@@ -88,7 +88,6 @@ func (h *Hash) Roll(ch byte) {
 	h.start = (h.start + 1) % SegmentLength
 }
 
-
 func (h *Hash) Mix() uint64 {
 	if h.length != SegmentLength {
 		panic("xcodec: hash window must be full before mixing")

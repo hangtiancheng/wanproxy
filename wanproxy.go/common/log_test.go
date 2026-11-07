@@ -159,7 +159,7 @@ func TestParseLogLevel(t *testing.T) {
 		}
 	}
 	if _, err := ParseLogLevel("TRACE"); err == nil {
-		t.Fatalf("TRACE is not a C++ config log level and should be rejected")
+		t.Fatalf("TRACE is not a valid config log level and should be rejected")
 	}
 	if _, err := ParseLogLevel("nonsense"); err == nil {
 		t.Fatalf("unknown level should be rejected")

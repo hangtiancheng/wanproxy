@@ -93,7 +93,7 @@ func Scenarios() []Scenario {
 		{
 			ID:          "wan-chain",
 			Label:       "WAN optimization chain (dual proxy)",
-			Description: "Client-side proxy encodes XCodec+zlib → server-side proxy decodes; the classic WANProxy deployment",
+			Description: "Client-side proxy encodes XCodec+zlib → server-side proxy decodes; the standard WAN optimization deployment",
 			Kind:        "http",
 			Base:        "http://127.0.0.1:8320",
 			StatsProxy:  "proxy-wan-a",
@@ -103,7 +103,7 @@ func Scenarios() []Scenario {
 		{
 			ID:          "socks",
 			Label:       "SOCKS5 CONNECT proxy",
-			Description: "SOCKS5 handshake then CONNECT to the SRV (C++ semantics: reply before dial)",
+			Description: "SOCKS5 handshake then CONNECT to the SRV",
 			Kind:        "socks",
 			Proxy:       "127.0.0.1:8330",
 			Target:      srvTarget,
