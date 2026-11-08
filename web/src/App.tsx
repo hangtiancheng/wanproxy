@@ -44,7 +44,7 @@ const nav = [
 
 const backend = [
   { icon: Server, label: "SRV", value: "srv.go :3101" },
-  { icon: Waypoints, label: "Proxy", value: "wanproxy.go daemon" },
+  { icon: Waypoints, label: "Proxy", value: "wanproxy daemon" },
   { icon: Activity, label: "Monitor", value: ":9901/status" },
 ];
 
@@ -67,7 +67,7 @@ export default function App() {
                   <Zap />
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">WANProxy.go</span>
+                  <span className="truncate font-semibold">WANProxy</span>
                   <span className="text-muted-foreground truncate text-xs">
                     WAN optimization demo
                   </span>

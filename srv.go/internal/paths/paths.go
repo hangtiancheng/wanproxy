@@ -11,7 +11,7 @@ var SRV_ROOT = resolveRoot()
 
 var REPO_ROOT = filepath.Dir(SRV_ROOT)
 
-var WANPROXY_GO_ROOT = filepath.Join(REPO_ROOT, "wanproxy.go")
+var WANPROXY_GO_ROOT = filepath.Join(REPO_ROOT, "wanproxy")
 
 var (
 	DataDir           = filepath.Join(SRV_ROOT, "data")

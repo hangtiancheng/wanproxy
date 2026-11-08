@@ -81,7 +81,7 @@ func ensureBinaries() error {
 	if fileExists(paths.WanproxyBin) && fileExists(paths.TackBin) && fileExists(paths.XcdumpBin) {
 		return nil
 	}
-	log.Printf("[daemon] building wanproxy.go binaries (make build)...")
+	log.Printf("[daemon] building wanproxy binaries (make build)...")
 	cmd := exec.Command("make", "build")
 	cmd.Dir = paths.WANPROXY_GO_ROOT
 	cmd.Stdout = os.Stdout

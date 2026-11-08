@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/hangtiancheng/wanproxy/srv.go/internal/payload"
-	wanproxyssh "github.com/hangtiancheng/wanproxy/wanproxy.go/ssh"
+	wanproxyssh "github.com/hangtiancheng/wanproxy/wanproxy/ssh"
 )
 
 func benchSSH(proxyAddr string, pattern payload.Pattern, size, seed int64) (string, error) {

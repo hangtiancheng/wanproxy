@@ -4,7 +4,7 @@ Go SRV for the WANProxy demo, built on
 [`yukino_http`](https://github.com/hangtiancheng/yukino.go/tree/main/libs/yukino_http).
 One process does everything:
 
-1. spawns the **wanproxy.go demo fleet** (single daemon, 11 proxy listeners)
+1. spawns the **wanproxy demo fleet** (single daemon, 11 proxy listeners)
    plus an in-process **SSH echo server**,
 2. serves the HTTP API for the web dashboard on `127.0.0.1:3101`,
 3. runs server-side benchmarks (`wanbench`) through the proxy chains,
@@ -17,7 +17,7 @@ cd srv.go
 go run ./cmd/server          # or: make build && ./bin/wanproxy-srv
 ```
 
-First start builds `wanproxy.go/bin/{wanproxy,tack,xcdump}` via `make build`
+First start builds `wanproxy/bin/{wanproxy,tack,xcdump}` via `make build`
 if missing, generates a demo-only SSH host key, and renders
 `demo/wanproxy.example.json` into `data/wanproxy.json`.
 

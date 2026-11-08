@@ -3,11 +3,11 @@
 This workspace holds the Go WAN optimization proxy, the demo backend and
 the web front-end that drives it.
 
-| Directory      | What it is                                                                                                                                                                                                                      |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wanproxy.go/` | **Go proxy** — xcodec dedup codec, pipe protocol, zlib, SSH transport, XCDFS disk cache, TCP/UDP/SOCKS/SSH proxies, JSON configuration and schema, monitor, `tack`/`xcdump`/`fwdproxy` tools. Built on the Go standard library. |
-| `srv.go/`      | **Go SRV** (yukino_http) — spawns the wanproxy.go fleet and SSH echo, and serves the file/monitor/bench/experiment/tools APIs.                                                                                                  |
-| `web/`         | React + TailwindCSS demo front-end.                                                                                                                                                                                             |
+| Directory   | What it is                                                                                                                                                                                                                      |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wanproxy/` | **Go proxy** — xcodec dedup codec, pipe protocol, zlib, SSH transport, XCDFS disk cache, TCP/UDP/SOCKS/SSH proxies, JSON configuration and schema, monitor, `tack`/`xcdump`/`fwdproxy` tools. Built on the Go standard library. |
+| `srv.go/`   | **Go SRV** (yukino_http) — spawns the wanproxy fleet and SSH echo, and serves the file/monitor/bench/experiment/tools APIs.                                                                                                     |
+| `web/`      | React + TailwindCSS demo front-end.                                                                                                                                                                                             |
 
 ## Demo quickstart
 
@@ -69,7 +69,7 @@ experiments report real wire savings.
 
 ## Component details
 
-- Go proxy: [`wanproxy.go/README.md`](wanproxy.go/README.md) — package layout,
+- Go proxy: [`wanproxy/README.md`](wanproxy/README.md) — package layout,
   configuration and schema, architecture, and verification.
 - Go SRV: [`srv.go/README.md`](srv.go/README.md) — the HTTP API, demo fleet
   lifecycle, and benchmark/experiment orchestration.

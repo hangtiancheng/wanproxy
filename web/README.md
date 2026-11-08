@@ -1,6 +1,6 @@
-# WANProxy.go — Web Dashboard
+# WANProxy — Web Dashboard
 
-React dashboard for the wanproxy.go WAN optimization proxy demo. It visualizes
+React dashboard for the wanproxy WAN optimization proxy demo. It visualizes
 the live proxy fleet, runs multi-arm A/B experiments and protocol benchmarks
 (HTTP / SOCKS5 / SSH), drives file transfers through selectable proxy chains,
 and inspects XCodec frame composition with the `tack` and `xcdump` tools.
@@ -23,7 +23,7 @@ pnpm dev        # http://localhost:5173
 ```
 
 The dashboard expects the Go SRV on `http://127.0.0.1:3101`
-(`cd ../srv.go && go run ./cmd/server`), which spawns the wanproxy.go demo
+(`cd ../srv.go && go run ./cmd/server`), which spawns the wanproxy demo
 fleet and exposes the monitor/file/bench/experiment APIs. Without it, pages
 render their offline states.
 

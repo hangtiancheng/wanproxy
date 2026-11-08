@@ -241,7 +241,7 @@ func run(dir string, env []string, name string, args ...string) error {
 }
 
 func buildGo(root string) error {
-	wanproxyDir := filepath.Join(root, "wanproxy.go")
+	wanproxyDir := filepath.Join(root, "wanproxy")
 	if err := run(wanproxyDir, nil, "go", "build", "./..."); err != nil {
 		return err
 	}
@@ -522,7 +522,7 @@ func openBrowser(opts options) error {
 }
 
 func testGo(root string) error {
-	if err := run(filepath.Join(root, "wanproxy.go"), nil, "go", "test", "./..."); err != nil {
+	if err := run(filepath.Join(root, "wanproxy"), nil, "go", "test", "./..."); err != nil {
 		return err
 	}
 	srvDir := filepath.Join(root, "srv.go")
@@ -541,7 +541,7 @@ func testWeb(root string) error {
 
 func clean(root string) error {
 	for _, path := range []string{
-		filepath.Join(root, "wanproxy.go", "bin"),
+		filepath.Join(root, "wanproxy", "bin"),
 		filepath.Join(root, "srv.go", "bin"),
 		filepath.Join(root, "web", "dist"),
 	} {

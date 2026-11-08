@@ -1,5 +1,5 @@
 {
-  "$schema": "../../wanproxy.go/config/schema.json",
+  "$schema": "../../wanproxy/config/schema.json",
   "log": {
     "level": "info"
   },

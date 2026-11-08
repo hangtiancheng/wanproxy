@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/hangtiancheng/wanproxy/srv.go/internal/paths"
-	"github.com/hangtiancheng/wanproxy/wanproxy.go/config"
+	"github.com/hangtiancheng/wanproxy/wanproxy/config"
 )
 
 func TestRenderJSONConfig(t *testing.T) {
