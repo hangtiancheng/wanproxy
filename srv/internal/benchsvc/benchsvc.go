@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/bench"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/monitor"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/payload"
+	"github.com/hangtiancheng/wanproxy/srv/internal/bench"
+	"github.com/hangtiancheng/wanproxy/srv/internal/monitor"
+	"github.com/hangtiancheng/wanproxy/srv/internal/payload"
 )
 
 var ErrAlreadyRunning = errors.New("a benchmark is already running")

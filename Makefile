@@ -7,7 +7,7 @@ MONITOR_PORT  ?= 9901
 SSH_ECHO_PORT ?= 8349
 
 PORTS := --srv-port=$(SRV_PORT) --web-port=$(WEB_PORT) --monitor-port=$(MONITOR_PORT) --ssh-echo-port=$(SSH_ECHO_PORT)
-STACK := $(GO) run ./srv.go/cmd/stack
+STACK := $(GO) run ./srv/cmd/stack
 
 .DEFAULT_GOAL := dev
 

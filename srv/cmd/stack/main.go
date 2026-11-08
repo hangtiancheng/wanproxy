@@ -184,7 +184,7 @@ func help(opts options) {
   dev       backend + web in the foreground (Ctrl-C stops both)
   srv       backend only, foreground
   web       web front-end only, foreground
-  start     backend + web backgrounded (logs and pidfiles in srv.go/data/)
+  start     backend + web backgrounded (logs and pidfiles in srv/data/)
   stop      stop the background processes
   restart   stop + start
   status    show background process state
@@ -208,7 +208,7 @@ func exeSuffix() string {
 }
 
 func srvBinary(root string) string {
-	return filepath.Join(root, "srv.go", "bin", "wanproxy-srv"+exeSuffix())
+	return filepath.Join(root, "srv", "bin", "wanproxy-srv"+exeSuffix())
 }
 
 func backendEnv(opts options) []string {
@@ -256,7 +256,7 @@ func buildGo(root string) error {
 		}
 	}
 
-	srvDir := filepath.Join(root, "srv.go")
+	srvDir := filepath.Join(root, "srv")
 	if err := os.MkdirAll(filepath.Join(srvDir, "bin"), 0o755); err != nil {
 		return err
 	}
@@ -340,22 +340,22 @@ func start(root string, opts options) error {
 	if err := buildGo(root); err != nil {
 		return err
 	}
-	pidDir := filepath.Join(root, "srv.go", "data", "pids")
+	pidDir := filepath.Join(root, "srv", "data", "pids")
 	if err := os.MkdirAll(pidDir, 0o755); err != nil {
 		return err
 	}
 
-	if err := startOne(pidDir, "srv", filepath.Join(root, "srv.go", "data", "server.log"),
+	if err := startOne(pidDir, "srv", filepath.Join(root, "srv", "data", "server.log"),
 		backendEnv(opts), srvBinary(root), root, nil); err != nil {
 		return err
 	}
 	webCmd := command("pnpm", "--dir", "web", "dev", "--port", strconv.Itoa(opts.webPort))
-	if err := startOne(pidDir, "web", filepath.Join(root, "srv.go", "data", "web.log"),
+	if err := startOne(pidDir, "web", filepath.Join(root, "srv", "data", "web.log"),
 		nil, "", root, webCmd); err != nil {
 		return err
 	}
-	logf("backend -> http://127.0.0.1:%d  log: srv.go/data/server.log", opts.srvPort)
-	logf("web -> http://localhost:%d  log: srv.go/data/web.log", opts.webPort)
+	logf("backend -> http://127.0.0.1:%d  log: srv/data/server.log", opts.srvPort)
+	logf("web -> http://localhost:%d  log: srv/data/web.log", opts.webPort)
 	return nil
 }
 
@@ -395,7 +395,7 @@ func startOne(pidDir, name, logPath string, env []string, binary, root string, e
 }
 
 func stop(root string) error {
-	pidDir := filepath.Join(root, "srv.go", "data", "pids")
+	pidDir := filepath.Join(root, "srv", "data", "pids")
 	for _, name := range []string{"srv", "web"} {
 		pidFile := filepath.Join(pidDir, name+".pid")
 		pid, ok := readPid(pidFile)
@@ -411,7 +411,7 @@ func stop(root string) error {
 }
 
 func status(root string) error {
-	pidDir := filepath.Join(root, "srv.go", "data", "pids")
+	pidDir := filepath.Join(root, "srv", "data", "pids")
 	for _, name := range []string{"srv", "web"} {
 		pid, ok := readPid(filepath.Join(pidDir, name+".pid"))
 		switch {
@@ -428,8 +428,8 @@ func status(root string) error {
 
 func logs(root string) error {
 	paths := []string{
-		filepath.Join(root, "srv.go", "data", "server.log"),
-		filepath.Join(root, "srv.go", "data", "web.log"),
+		filepath.Join(root, "srv", "data", "server.log"),
+		filepath.Join(root, "srv", "data", "web.log"),
 	}
 	offsets := make(map[string]int64)
 	for _, path := range paths {
@@ -525,7 +525,7 @@ func testGo(root string) error {
 	if err := run(filepath.Join(root, "wanproxy"), nil, "go", "test", "./..."); err != nil {
 		return err
 	}
-	srvDir := filepath.Join(root, "srv.go")
+	srvDir := filepath.Join(root, "srv")
 	if err := run(srvDir, nil, "go", "vet", "./..."); err != nil {
 		return err
 	}
@@ -542,7 +542,7 @@ func testWeb(root string) error {
 func clean(root string) error {
 	for _, path := range []string{
 		filepath.Join(root, "wanproxy", "bin"),
-		filepath.Join(root, "srv.go", "bin"),
+		filepath.Join(root, "srv", "bin"),
 		filepath.Join(root, "web", "dist"),
 	} {
 		if err := os.RemoveAll(path); err != nil {

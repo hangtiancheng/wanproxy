@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/files"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/paths"
+	"github.com/hangtiancheng/wanproxy/srv/internal/files"
+	"github.com/hangtiancheng/wanproxy/srv/internal/paths"
 )
 
 type HashCount struct {

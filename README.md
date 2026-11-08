@@ -6,7 +6,7 @@ the web front-end that drives it.
 | Directory   | What it is                                                                                                                                                                                                                      |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `wanproxy/` | **Go proxy** — xcodec dedup codec, pipe protocol, zlib, SSH transport, XCDFS disk cache, TCP/UDP/SOCKS/SSH proxies, JSON configuration and schema, monitor, `tack`/`xcdump`/`fwdproxy` tools. Built on the Go standard library. |
-| `srv.go/`   | **Go SRV** (yukino_http) — spawns the wanproxy fleet and SSH echo, and serves the file/monitor/bench/experiment/tools APIs.                                                                                                     |
+| `srv/`      | **Go SRV** (yukino_http) — spawns the wanproxy fleet and SSH echo, and serves the file/monitor/bench/experiment/tools APIs.                                                                                                     |
 | `web/`      | React + TailwindCSS demo front-end.                                                                                                                                                                                             |
 
 ## Demo quickstart
@@ -19,9 +19,9 @@ make dev         # SRV (:3101) + web (:5173), foreground
 ```
 
 Open http://localhost:5173. `make start` / `make stop` run the same stack in
-the background (logs and pidfiles under `srv.go/data/`); `make help` lists
+the background (logs and pidfiles under `srv/data/`); `make help` lists
 every target. `make srv` runs only the backend, and `make web` runs only the
-front-end. All targets forward to `srv.go/cmd/stack`, a cross-platform Go
+front-end. All targets forward to `srv/cmd/stack`, a cross-platform Go
 orchestrator.
 
 On first boot the SRV renders its `demo/wanproxy.example.json`, builds the
@@ -59,7 +59,7 @@ experiments report real wire savings.
 | Port               | Role                                           |
 | ------------------ | ---------------------------------------------- |
 | 5173               | Vite dev server (web)                          |
-| 3101               | SRV (`srv.go`)                                 |
+| 3101               | SRV (`srv`)                                    |
 | 9901               | wanproxy daemon HTTP monitor                   |
 | 8310 / 8311 / 8312 | passthrough / zlib / xcodec single-hop proxies |
 | 8320 → 8321        | WAN chain (wan-a → wan-b, xcodec dedup)        |
@@ -71,7 +71,7 @@ experiments report real wire savings.
 
 - Go proxy: [`wanproxy/README.md`](wanproxy/README.md) — package layout,
   configuration and schema, architecture, and verification.
-- Go SRV: [`srv.go/README.md`](srv.go/README.md) — the HTTP API, demo fleet
+- Go SRV: [`srv/README.md`](srv/README.md) — the HTTP API, demo fleet
   lifecycle, and benchmark/experiment orchestration.
 - Web dashboard: [`web/README.md`](web/README.md) — pages, development
   commands, and theming.

@@ -20,8 +20,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/bench"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/paths"
+	"github.com/hangtiancheng/wanproxy/srv/internal/bench"
+	"github.com/hangtiancheng/wanproxy/srv/internal/paths"
 )
 
 type Daemon struct {

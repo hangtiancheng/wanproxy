@@ -16,11 +16,11 @@ import (
 
 	yukino "github.com/hangtiancheng/yukino.go/libs/yukino_http"
 
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/benchsvc"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/files"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/monitor"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/payload"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/tools"
+	"github.com/hangtiancheng/wanproxy/srv/internal/benchsvc"
+	"github.com/hangtiancheng/wanproxy/srv/internal/files"
+	"github.com/hangtiancheng/wanproxy/srv/internal/monitor"
+	"github.com/hangtiancheng/wanproxy/srv/internal/payload"
+	"github.com/hangtiancheng/wanproxy/srv/internal/tools"
 )
 
 const maxTransferSize = 4 * 1024 * 1024 * 1024

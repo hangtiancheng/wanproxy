@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/payload"
+	"github.com/hangtiancheng/wanproxy/srv/internal/payload"
 )
 
 type Result struct {

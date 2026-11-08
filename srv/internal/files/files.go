@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/paths"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/payload"
+	"github.com/hangtiancheng/wanproxy/srv/internal/paths"
+	"github.com/hangtiancheng/wanproxy/srv/internal/payload"
 )
 
 type FileMeta struct {

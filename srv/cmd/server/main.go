@@ -10,13 +10,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/benchsvc"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/daemon"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/files"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/monitor"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/paths"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/server"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/tools"
+	"github.com/hangtiancheng/wanproxy/srv/internal/benchsvc"
+	"github.com/hangtiancheng/wanproxy/srv/internal/daemon"
+	"github.com/hangtiancheng/wanproxy/srv/internal/files"
+	"github.com/hangtiancheng/wanproxy/srv/internal/monitor"
+	"github.com/hangtiancheng/wanproxy/srv/internal/paths"
+	"github.com/hangtiancheng/wanproxy/srv/internal/server"
+	"github.com/hangtiancheng/wanproxy/srv/internal/tools"
 )
 
 func main() {

@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/bench"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/payload"
+	"github.com/hangtiancheng/wanproxy/srv/internal/bench"
+	"github.com/hangtiancheng/wanproxy/srv/internal/payload"
 )
 
 func main() {

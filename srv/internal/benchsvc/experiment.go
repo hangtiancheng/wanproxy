@@ -6,8 +6,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/monitor"
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/payload"
+	"github.com/hangtiancheng/wanproxy/srv/internal/monitor"
+	"github.com/hangtiancheng/wanproxy/srv/internal/payload"
 )
 
 const (

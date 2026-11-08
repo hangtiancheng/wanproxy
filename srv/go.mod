@@ -1,4 +1,4 @@
-module github.com/hangtiancheng/wanproxy/srv.go
+module github.com/hangtiancheng/wanproxy/srv
 
 go 1.26.0
 

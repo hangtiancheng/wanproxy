@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/paths"
+	"github.com/hangtiancheng/wanproxy/srv/internal/paths"
 	"github.com/hangtiancheng/wanproxy/wanproxy/config"
 )
 

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/payload"
+	"github.com/hangtiancheng/wanproxy/srv/internal/payload"
 	wanproxyssh "github.com/hangtiancheng/wanproxy/wanproxy/ssh"
 )
 

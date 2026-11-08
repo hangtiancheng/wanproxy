@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/hangtiancheng/wanproxy/srv.go/internal/monitor"
+	"github.com/hangtiancheng/wanproxy/srv/internal/monitor"
 )
 
 func approx(t *testing.T, name string, got, want float64) {
