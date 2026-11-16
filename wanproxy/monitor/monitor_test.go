@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,31 @@ import (
 )
 
 type fakeSource struct{}
+
+func TestMonitorLifecycle(t *testing.T) {
+	srv := NewServer(proxy.Endpoint{Host: "127.0.0.1", Port: "0"}, &fakeSource{})
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Start(); err == nil {
+		t.Fatal("started monitor twice")
+	}
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			if err := srv.Stop(); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	if srv.Address() != nil {
+		t.Fatal("stopped monitor retained address")
+	}
+	if err := srv.Start(); err == nil {
+		t.Fatal("restarted closed monitor")
+	}
+}
 
 func (f *fakeSource) Objects() []config.Object {
 	return []config.Object{

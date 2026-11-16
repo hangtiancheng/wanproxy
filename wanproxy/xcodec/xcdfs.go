@@ -30,6 +30,7 @@ type Disk struct {
 	log      *slog.Logger
 	refs     int
 	writeErr error
+	fallback *MemoryCache
 
 	diskBlocks  uint64
 	indexBlocks uint64
@@ -91,6 +92,23 @@ func OpenDisk(path string, size uint64, log *slog.Logger) (*Disk, error) {
 		f.Close()
 		return nil, fmt.Errorf("could not stat disk: %w", err)
 	}
+	// Different hard-link paths must not create competing writers for the
+	// same volume. Resolve by file identity before any truncate or load.
+	for _, open := range diskMap {
+		other, err := open.file.Stat()
+		if err == nil && os.SameFile(st, other) {
+			f.Close()
+			if size != 0 && uint64(st.Size()) != size {
+				return nil, errors.New("cannot resize an open XCDFS volume")
+			}
+			open.refs++
+			return open, nil
+		}
+	}
+	if err := lockVolume(f); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("could not lock volume: %w", err)
+	}
 	if size != 0 && st.Mode().IsRegular() {
 		if st.Size() != 0 && uint64(st.Size()) != size {
 			f.Close()
@@ -113,6 +131,7 @@ func OpenDisk(path string, size uint64, log *slog.Logger) (*Disk, error) {
 		file:       f,
 		path:       path,
 		refs:       1,
+		fallback:   NewMemoryCache(),
 		log:        log.With("component", "/xcodec/disk"),
 		diskBlocks: size / xcdfsBlockSize,
 		xuidCaches: make(map[uint16]*DiskCache),
@@ -492,6 +511,9 @@ func (d *Disk) lookup(cache *DiskCache, hash uint64) []byte {
 }
 
 func (d *Disk) connect(uuid CacheID) (*DiskCache, error) {
+	if uuid == (CacheID{}) {
+		return nil, errors.New("XCDFS: zero cache identity is reserved")
+	}
 	if xuid, ok := d.uuidXUID[uuid]; ok {
 		return d.xuidCaches[xuid], nil
 	}
@@ -628,7 +650,7 @@ func (c *DiskCache) OutOfBand() bool { return false }
 func (c *DiskCache) Connect(id CacheID) Cache {
 	cache, err := c.disk.Connect(id)
 	if err != nil {
-		return NewMemoryCache(WithCacheID(id))
+		return c.disk.fallback.Connect(id)
 	}
 	return cache
 }

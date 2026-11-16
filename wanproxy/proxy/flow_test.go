@@ -89,7 +89,7 @@ func TestFlowQueueCoalescesFragmentedReads(t *testing.T) {
 
 func TestControlQueueNeverSplitsFrames(t *testing.T) {
 	q := newFlowQueue(false)
-	first := xcodec.AppendPipeFrame(nil, make([]byte, 28000))
+	first := xcodec.AppendPipeFrame(nil, make([]byte, 28000), make([]byte, 28000))
 	learn := xcodec.AppendLearn(nil, [][]byte{make([]byte, xcodec.SegmentLength), make([]byte, xcodec.SegmentLength), make([]byte, xcodec.SegmentLength)})
 	if err := q.push(delivery{data: first}); err != nil {
 		t.Fatal(err)

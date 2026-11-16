@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hangtiancheng/wanproxy/srv/internal/paths"
 	"github.com/hangtiancheng/wanproxy/srv/internal/payload"
 	wanproxyssh "github.com/hangtiancheng/wanproxy/wanproxy/ssh"
 )
@@ -27,7 +28,22 @@ func benchSSH(proxyAddr string, pattern payload.Pattern, size, seed int64) (stri
 	}
 	defer conn.Close()
 
-	tr := wanproxyssh.NewTransport(conn, wanproxyssh.Config{Role: wanproxyssh.ClientRole})
+	fingerprint := os.Getenv("SSH_PEER_HOST_KEY_FINGERPRINT")
+	if fingerprint == "" {
+		data, err := os.ReadFile(paths.HostKeyPath)
+		if err != nil {
+			return "", fmt.Errorf("read demo host key for SSH pin: %w", err)
+		}
+		key, err := wanproxyssh.LoadRSAPrivateKeyPEM(data)
+		if err != nil {
+			return "", err
+		}
+		fingerprint, err = wanproxyssh.PublicKeyFingerprint(&key.PublicKey)
+		if err != nil {
+			return "", err
+		}
+	}
+	tr := wanproxyssh.NewTransport(conn, wanproxyssh.Config{Role: wanproxyssh.ClientRole, PeerHostKeyFingerprint: fingerprint})
 	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
 	if err := tr.Handshake(); err != nil {
 		return "", fmt.Errorf("ssh handshake: %w", err)

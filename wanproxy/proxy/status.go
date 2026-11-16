@@ -61,6 +61,7 @@ type UDPProxyStatus struct {
 	Address               *BoundAddress `json:"address,omitempty"`
 	CreatedSessions       int64         `json:"createdSessions"`
 	ActiveSessions        int           `json:"activeSessions"`
+	QueuedBytes           int           `json:"queuedBytes"`
 	ClientToPeerDatagrams int64         `json:"clientToPeerDatagrams"`
 	PeerToClientDatagrams int64         `json:"peerToClientDatagrams"`
 	ClientToPeerBytes     int64         `json:"clientToPeerBytes"`

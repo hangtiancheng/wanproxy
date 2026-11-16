@@ -14,7 +14,7 @@ func TestSessionLearnSurvivesCacheEviction(t *testing.T) {
 	first := mustEncode(t, a, input)
 	refs := mustEncode(t, a, input)
 	b := NewSession(NewMemoryCache(WithSegmentLimit(1)))
-	wire := append(bytes.Clone(first[:2+PipeHelloIDLength]), refs...)
+	wire := append(bytes.Clone(first[:PipeHelloSize]), refs...)
 	res := mustReceive(t, b, wire)
 	learn := mustReceive(t, a, res.Responses).Responses
 	res = mustReceive(t, b, learn)
@@ -73,6 +73,60 @@ func TestSessionBoundsTinyFrames(t *testing.T) {
 	}
 }
 
+func TestSessionRejectsOverflowingAdvance(t *testing.T) {
+	s := NewSession(NewMemoryCache())
+	mustEncode(t, s, []byte("pending"))
+	if _, err := s.Receive(AppendAdvance(nil, ^uint32(0))); err == nil {
+		t.Fatal("accepted ADVANCE exceeding reference frame count")
+	}
+}
+
+func TestSessionRejectsHashCollisionBeforeDelivery(t *testing.T) {
+	a := NewSession(NewMemoryCache())
+	cache := NewMemoryCache()
+	b := NewSession(cache)
+	input := bytes.Repeat([]byte{9}, SegmentLength)
+	collision := bytes.Clone(input)
+	collision[0], collision[1], collision[2] = 11, 5, 11
+	if HashSegment(input) != HashSegment(collision) {
+		t.Fatal("regression fixture is not a rolling-hash collision")
+	}
+	res := mustReceive(t, b, mustEncode(t, a, input))
+	mustReceive(t, a, res.Responses)
+	// Simulate another connection replacing this shared peer namespace.
+	cache.Connect(a.ID()).Replace(HashSegment(input), collision)
+	res, err := b.Receive(mustEncode(t, a, input))
+	if !errors.Is(err, ErrIntegrity) || len(res.Output) != 0 {
+		t.Fatalf("delivered corrupt cached plaintext: bytes=%d error=%v", len(res.Output), err)
+	}
+}
+
+func TestSessionBuffersUntilCompleteFrameIntegrity(t *testing.T) {
+	a, b := NewSession(NewMemoryCache()), NewSession(NewMemoryCache())
+	input := bytes.Repeat([]byte("chunked plaintext"), 100)
+	wire := mustEncode(t, a, input)
+	for _, part := range wire[:len(wire)-1] {
+		res := mustReceive(t, b, []byte{part})
+		if len(res.Output) != 0 {
+			t.Fatal("released plaintext before complete frame verification")
+		}
+	}
+	res := mustReceive(t, b, wire[len(wire)-1:])
+	if !bytes.Equal(res.Output, input) {
+		t.Fatal("verified frame was not released")
+	}
+}
+
+func TestSessionRejectsModifiedFrameDigest(t *testing.T) {
+	a, b := NewSession(NewMemoryCache()), NewSession(NewMemoryCache())
+	wire := mustEncode(t, a, []byte("intact plaintext with a corrupt frame digest"))
+	wire[PipeHelloSize+9] ^= 1
+	res, err := b.Receive(wire)
+	if !errors.Is(err, ErrIntegrity) || len(res.Output) != 0 || len(res.Responses) != 0 {
+		t.Fatalf("unverified frame delivered/acknowledged: %+v %v", res, err)
+	}
+}
+
 func TestSessionRejectsTruncatedTransport(t *testing.T) {
 	s := NewSession(NewMemoryCache())
 	mustReceive(t, s, AppendHello(nil, CacheID{1}))
@@ -84,11 +138,11 @@ func TestSessionRejectsTruncatedTransport(t *testing.T) {
 func TestSessionBoundsPendingFrames(t *testing.T) {
 	s := NewSession(NewMemoryCache())
 	mustReceive(t, s, AppendHello(nil, CacheID{1}))
-	ref := []byte{Magic, OpRef, 0, 0, 0, 0, 0, 0, 0, 1}
+	ref := AppendFrame(nil, RefFrame(1, [32]byte{}))
 	for range maxInFlightFrames {
-		mustReceive(t, s, AppendPipeFrame(nil, ref))
+		mustReceive(t, s, AppendPipeFrame(nil, ref, make([]byte, SegmentLength)))
 	}
-	if _, err := s.Receive(AppendPipeFrame(nil, ref)); !errors.Is(err, ErrSessionLimit) {
+	if _, err := s.Receive(AppendPipeFrame(nil, ref, make([]byte, SegmentLength))); !errors.Is(err, ErrSessionLimit) {
 		t.Fatalf("unbounded pending frame retention: %v", err)
 	}
 }
@@ -97,7 +151,7 @@ func TestSessionRejectsDataAfterEOS(t *testing.T) {
 	s := NewSession(NewMemoryCache())
 	wire := AppendEOS(AppendHello(nil, CacheID{1}))
 	mustReceive(t, s, wire)
-	if _, err := s.Receive(AppendPipeFrame(nil, []byte("lost data"))); err == nil {
+	if _, err := s.Receive(AppendPipeFrame(nil, []byte("lost data"), []byte("lost data"))); err == nil {
 		t.Fatal("accepted data after signaling output EOF")
 	}
 }

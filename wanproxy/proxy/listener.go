@@ -13,26 +13,38 @@ import (
 )
 
 type SSHSettings struct {
-	HostKey *rsa.PrivateKey
+	HostKey                *rsa.PrivateKey
+	PeerHostKeyFingerprint string
 
 	HandshakeTimeout time.Duration
 }
 
 type Listener struct {
-	Name        string
-	Iface       Endpoint
-	Peer        Endpoint
-	IfaceCodec  *pipeline.CodecSpec
-	PeerCodec   *pipeline.CodecSpec
-	SSH         *SSHSettings
-	Log         *slog.Logger
-	DialContext func(context.Context, string, string) (net.Conn, error)
-	Dial        func(network, addr string) (net.Conn, error)
+	Name           string
+	Iface          Endpoint
+	Peer           Endpoint
+	IfaceCodec     *pipeline.CodecSpec
+	PeerCodec      *pipeline.CodecSpec
+	SSH            *SSHSettings
+	Log            *slog.Logger
+	MaxConnections int
+	DialContext    func(context.Context, string, string) (net.Conn, error)
 
 	listenerState
 }
 
 func (l *Listener) Start() error {
+	if l.SSH != nil {
+		if err := wanproxyssh.ValidateHostKey(l.SSH.HostKey); err != nil {
+			return err
+		}
+		if err := wanproxyssh.ValidateHostKeyFingerprint(l.SSH.PeerHostKeyFingerprint); err != nil {
+			return err
+		}
+		if l.SSH.HandshakeTimeout < 0 {
+			return fmt.Errorf("proxy %q: negative handshake timeout", l.Name)
+		}
+	}
 	if err := l.IfaceCodec.Validate(); err != nil {
 		return err
 	}
@@ -45,18 +57,30 @@ func (l *Listener) Start() error {
 	if !l.Peer.Valid() {
 		return fmt.Errorf("proxy %q: peer endpoint is incomplete", l.Name)
 	}
-	if l.Log == nil {
-		l.Log = slog.Default()
-	}
-	return l.start(l.Iface, l.Log, l.Name, l.handle)
+	return l.start(l.Iface, proxyLogger(l.Log), l.Name, l.MaxConnections, l.handle)
 }
 
 func (l *Listener) handle(client net.Conn) {
 	defer l.drop(client)
 
-	upstream, err := dialPeer(l.ctx, l.DialContext, l.Dial, l.Peer.Network(), l.Peer.Addr())
+	ctx := l.ctx
+	var deadline time.Time
+	if l.SSH != nil {
+		timeout := l.SSH.HandshakeTimeout
+		if timeout == 0 {
+			timeout = 15 * time.Second
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+		deadline, _ = ctx.Deadline()
+		if err := client.SetDeadline(deadline); err != nil {
+			return
+		}
+	}
+	upstream, err := dialPeer(ctx, l.DialContext, l.Peer.Network(), l.Peer.Addr())
 	if err != nil {
-		l.Log.Error("could not connect to peer", "proxy", l.Name, "error", err)
+		proxyLogger(l.Log).Error("could not connect to peer", "proxy", l.Name, "error", err)
 		client.Close()
 		return
 	}
@@ -67,9 +91,9 @@ func (l *Listener) handle(client net.Conn) {
 
 	var clientStream, upstreamStream StreamConn = client, upstream
 	if l.SSH != nil {
-		clientStream, upstreamStream, err = l.handshakeSSH(client, upstream)
+		clientStream, upstreamStream, err = l.handshakeSSH(client, upstream, deadline)
 		if err != nil {
-			l.Log.Error("ssh handshake failed", "proxy", l.Name, "error", err)
+			proxyLogger(l.Log).Error("ssh handshake failed", "proxy", l.Name, "error", err)
 			client.Close()
 			upstream.Close()
 			return
@@ -78,7 +102,7 @@ func (l *Listener) handle(client net.Conn) {
 
 	relay, err := NewRelay(clientStream, upstreamStream, l.IfaceCodec, l.PeerCodec, l.Log)
 	if err != nil {
-		l.Log.Error("could not build relay", "proxy", l.Name, "error", err)
+		proxyLogger(l.Log).Error("could not build relay", "proxy", l.Name, "error", err)
 		client.Close()
 		upstream.Close()
 		return
@@ -86,12 +110,7 @@ func (l *Listener) handle(client net.Conn) {
 	relay.Run()
 }
 
-func (l *Listener) handshakeSSH(client, upstream net.Conn) (StreamConn, StreamConn, error) {
-	timeout := l.SSH.HandshakeTimeout
-	if timeout == 0 {
-		timeout = 15 * time.Second
-	}
-	deadline := time.Now().Add(timeout)
+func (l *Listener) handshakeSSH(client, upstream net.Conn, deadline time.Time) (StreamConn, StreamConn, error) {
 	if err := client.SetDeadline(deadline); err != nil {
 		return nil, nil, err
 	}
@@ -102,14 +121,20 @@ func (l *Listener) handshakeSSH(client, upstream net.Conn) (StreamConn, StreamCo
 	serverTransport := wanproxyssh.NewTransport(client, wanproxyssh.Config{
 		Role:    wanproxyssh.ServerRole,
 		HostKey: l.SSH.HostKey,
-		Tagged:  codecActive(l.IfaceCodec),
 		Log:     l.Log,
 	})
 	clientTransport := wanproxyssh.NewTransport(upstream, wanproxyssh.Config{
-		Role:   wanproxyssh.ClientRole,
-		Tagged: codecActive(l.PeerCodec),
-		Log:    l.Log,
+		Role:                   wanproxyssh.ClientRole,
+		PeerHostKeyFingerprint: l.SSH.PeerHostKeyFingerprint,
+		Log:                    l.Log,
 	})
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			serverTransport.Close()
+			clientTransport.Close()
+		}
+	}()
 
 	type handshakeResult struct {
 		side string
@@ -138,9 +163,6 @@ func (l *Listener) handshakeSSH(client, upstream net.Conn) (StreamConn, StreamCo
 	if err := upstream.SetDeadline(noDeadline); err != nil {
 		return nil, nil, err
 	}
+	succeeded = true
 	return serverTransport, clientTransport, nil
-}
-
-func codecActive(spec *pipeline.CodecSpec) bool {
-	return spec != nil && spec.Mode != pipeline.ModeNone
 }

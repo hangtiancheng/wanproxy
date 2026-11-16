@@ -1,6 +1,7 @@
 package xcodec
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 )
@@ -28,7 +29,10 @@ const (
 
 	PipeAskMax = 512
 
-	PipeHelloIDLength = 16
+	PipeHelloIDLength   = 16
+	PipeProtocolVersion = 2
+	PipeHelloSize       = 3 + PipeHelloIDLength
+	PipeDataHeaderSize  = 1 + 4 + 4 + sha256.Size
 )
 
 type PipeFrameKind int
@@ -68,7 +72,9 @@ type PipeFrame struct {
 
 	ID CacheID
 
-	Payload []byte
+	Payload     []byte
+	PlainLength uint32
+	Digest      [sha256.Size]byte
 
 	Hashes []uint64
 
@@ -78,18 +84,22 @@ type PipeFrame struct {
 }
 
 func AppendHello(output []byte, id CacheID) []byte {
-	output = append(output, PipeOpHello, byte(len(id)))
+	output = append(output, PipeOpHello, PipeProtocolVersion, byte(len(id)))
 	return append(output, id[:]...)
 }
 
-func AppendPipeFrame(output, payload []byte) []byte {
-	if len(payload) == 0 || len(payload) > PipeMaxFrame {
+func AppendPipeFrame(output, payload, plaintext []byte) []byte {
+	if len(payload) == 0 || len(payload) > PipeMaxFrame || len(plaintext) == 0 || len(plaintext) > PipeMaxPayloadFrame {
 		panic("xcodec: frame payload length is invalid")
 	}
 	output = append(output, PipeOpFrame)
 	var be [4]byte
 	binary.BigEndian.PutUint32(be[:], uint32(len(payload)))
 	output = append(output, be[:]...)
+	binary.BigEndian.PutUint32(be[:], uint32(len(plaintext)))
+	output = append(output, be[:]...)
+	digest := sha256.Sum256(plaintext)
+	output = append(output, digest[:]...)
 	return append(output, payload...)
 }
 
@@ -159,16 +169,22 @@ func ReadPipeFrame(buf []byte) (PipeFrame, int, PipeFrameReadStatus, error) {
 		if len(buf) < 2 {
 			return PipeFrame{}, 0, PipeFrameReadNeedMore, nil
 		}
-		length := int(buf[1])
+		if buf[1] != PipeProtocolVersion {
+			return PipeFrame{}, 0, PipeFrameReadInvalid, fmt.Errorf("unsupported pipe protocol version %d", buf[1])
+		}
+		if len(buf) < 3 {
+			return PipeFrame{}, 0, PipeFrameReadNeedMore, nil
+		}
+		length := int(buf[2])
 		if length != PipeHelloIDLength {
 			return PipeFrame{}, 0, PipeFrameReadInvalid, fmt.Errorf("unsupported hello id length %d", length)
 		}
-		if len(buf) < 2+length {
+		if len(buf) < 3+length {
 			return PipeFrame{}, 0, PipeFrameReadNeedMore, nil
 		}
 		frame := PipeFrame{Kind: PipeFrameHello}
-		copy(frame.ID[:], buf[2:2+length])
-		return frame, 2 + length, PipeFrameReadOK, nil
+		copy(frame.ID[:], buf[3:3+length])
+		return frame, 3 + length, PipeFrameReadOK, nil
 
 	case PipeOpFrame:
 		if len(buf) < 5 {
@@ -178,10 +194,19 @@ func ReadPipeFrame(buf []byte) (PipeFrame, int, PipeFrameReadStatus, error) {
 		if length == 0 || length > PipeMaxFrame {
 			return PipeFrame{}, 0, PipeFrameReadInvalid, fmt.Errorf("invalid framed data length %d", length)
 		}
-		if uint64(len(buf)) < 5+uint64(length) {
+		if len(buf) < 9 {
 			return PipeFrame{}, 0, PipeFrameReadNeedMore, nil
 		}
-		return PipeFrame{Kind: PipeFrameFrame, Payload: buf[5 : 5+length]}, 5 + int(length), PipeFrameReadOK, nil
+		plainLength := binary.BigEndian.Uint32(buf[5:9])
+		if plainLength == 0 || plainLength > PipeMaxPayloadFrame {
+			return PipeFrame{}, 0, PipeFrameReadInvalid, fmt.Errorf("invalid plaintext frame length %d", plainLength)
+		}
+		if uint64(len(buf)) < PipeDataHeaderSize+uint64(length) {
+			return PipeFrame{}, 0, PipeFrameReadNeedMore, nil
+		}
+		frame := PipeFrame{Kind: PipeFrameFrame, Payload: buf[PipeDataHeaderSize : PipeDataHeaderSize+length], PlainLength: plainLength}
+		copy(frame.Digest[:], buf[9:PipeDataHeaderSize])
+		return frame, PipeDataHeaderSize + int(length), PipeFrameReadOK, nil
 
 	case PipeOpAsk:
 		count, status, err := readPipeCount(buf, "ask")

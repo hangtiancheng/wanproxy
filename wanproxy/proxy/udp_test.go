@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -39,6 +41,190 @@ func udpEcho(t *testing.T, network, addr string) Endpoint {
 	}()
 	t.Cleanup(func() { pc.Close(); <-done })
 	return endpointOf(t, pc.LocalAddr().String())
+}
+
+type udpErrorConn struct {
+	net.Conn
+	readErr, writeErr   error
+	readOnce, writeOnce sync.Once
+}
+
+func (c *udpErrorConn) Read(p []byte) (int, error) {
+	var err error
+	c.readOnce.Do(func() { err = c.readErr })
+	if err != nil {
+		return 0, &net.OpError{Op: "read", Net: "udp", Err: err}
+	}
+	return c.Conn.Read(p)
+}
+
+func (c *udpErrorConn) Write(p []byte) (int, error) {
+	var err error
+	c.writeOnce.Do(func() { err = c.writeErr })
+	if err != nil {
+		return 0, &net.OpError{Op: "write", Net: "udp", Err: err}
+	}
+	return c.Conn.Write(p)
+}
+
+func TestUDPRecoversPeerReadErrors(t *testing.T) {
+	for _, fault := range []error{syscall.ECONNREFUSED, syscall.ECONNRESET, syscall.ENOBUFS} {
+		t.Run(fault.Error(), func(t *testing.T) {
+			l := &UDPListener{Iface: Endpoint{Host: "127.0.0.1", Port: "0"}, Peer: udpEcho(t, "udp4", "127.0.0.1:0"),
+				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+					if err != nil {
+						return nil, err
+					}
+					return &udpErrorConn{Conn: conn, readErr: fault}, nil
+				},
+			}
+			udpExchange(t, udpClient(t, startUDP(t, l)), []byte("after asynchronous UDP error"))
+			if st := l.Status(); st.CreatedSessions != 1 || st.ActiveSessions != 1 {
+				t.Fatalf("recoverable error destroyed session: %+v", st)
+			}
+		})
+	}
+}
+
+func TestUDPRecoversPeerWriteErrors(t *testing.T) {
+	for _, fault := range []error{syscall.EMSGSIZE, syscall.ECONNREFUSED, syscall.ENOBUFS, context.DeadlineExceeded} {
+		t.Run(fault.Error(), func(t *testing.T) {
+			l := &UDPListener{Iface: Endpoint{Host: "127.0.0.1", Port: "0"}, Peer: udpEcho(t, "udp4", "127.0.0.1:0"),
+				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+					if err != nil {
+						return nil, err
+					}
+					return &udpErrorConn{Conn: conn, writeErr: fault}, nil
+				},
+			}
+			c := udpClient(t, startUDP(t, l))
+			if _, err := c.Write([]byte("dropped packet")); err != nil {
+				t.Fatal(err)
+			}
+			eventuallyUDP(t, func() bool { return l.Status().DroppedDatagrams == 1 })
+			udpExchange(t, c, []byte("same session after packet error"))
+			if st := l.Status(); st.CreatedSessions != 1 || st.ActiveSessions != 1 || st.ClientToPeerDatagrams != 1 {
+				t.Fatalf("recoverable error destroyed session: %+v", st)
+			}
+		})
+	}
+}
+
+type udpPacketErrorConn struct {
+	*net.UDPConn
+	readErr, writeErr   error
+	readOnce, writeOnce sync.Once
+}
+
+func (c *udpPacketErrorConn) ReadFromUDPAddrPort(p []byte) (int, netip.AddrPort, error) {
+	var err error
+	c.readOnce.Do(func() { err = c.readErr })
+	if err != nil {
+		return 0, netip.AddrPort{}, &net.OpError{Op: "read", Net: "udp", Err: err}
+	}
+	return c.UDPConn.ReadFromUDPAddrPort(p)
+}
+
+func (c *udpPacketErrorConn) WriteToUDPAddrPort(p []byte, addr netip.AddrPort) (int, error) {
+	var err error
+	c.writeOnce.Do(func() { err = c.writeErr })
+	if err != nil {
+		return 0, &net.OpError{Op: "write", Net: "udp", Err: err}
+	}
+	return c.UDPConn.WriteToUDPAddrPort(p, addr)
+}
+
+func TestUDPRecoversListenerErrors(t *testing.T) {
+	for _, op := range []string{"read", "write"} {
+		t.Run(op, func(t *testing.T) {
+			conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fault := &udpPacketErrorConn{UDPConn: conn}
+			if op == "read" {
+				fault.readErr = syscall.ECONNRESET
+			} else {
+				fault.writeErr = syscall.ENOBUFS
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			l := &UDPListener{conn: fault, ctx: ctx, cancel: cancel, sessions: make(map[netip.AddrPort]*udpSession),
+				Peer: udpEcho(t, "udp4", "127.0.0.1:0"), IdleTimeout: time.Second, MaxSessions: 2, MaxQueuedBytes: DefaultUDPMaxQueuedBytes, Log: testLogger(), writeToken: make(chan struct{}, 1)}
+			l.writeToken <- struct{}{}
+			l.wg.Add(2)
+			go l.receive()
+			go l.expire()
+			t.Cleanup(func() { l.Stop() })
+			c := udpClient(t, conn.LocalAddr().String())
+			if op == "write" {
+				if _, err := c.Write([]byte("lost reply")); err != nil {
+					t.Fatal(err)
+				}
+				eventuallyUDP(t, func() bool { return l.Status().DroppedDatagrams == 1 })
+			}
+			udpExchange(t, c, []byte("listener survived packet error"))
+			if st := l.Status(); !st.Listening || st.CreatedSessions != 1 || st.ActiveSessions != 1 {
+				t.Fatalf("packet error destroyed listener/session: %+v", st)
+			}
+		})
+	}
+}
+
+type udpBlockedReplyConn struct {
+	udpPacketConn
+	writer  net.Conn
+	started chan struct{}
+	once    sync.Once
+}
+
+func (c *udpBlockedReplyConn) SetWriteDeadline(deadline time.Time) error {
+	return c.writer.SetWriteDeadline(deadline)
+}
+
+func (c *udpBlockedReplyConn) WriteToUDPAddrPort(p []byte, _ netip.AddrPort) (int, error) {
+	c.once.Do(func() { close(c.started) })
+	return c.writer.Write(p)
+}
+
+func TestUDPExpiredReplyReleasesSharedWriter(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	conn := &udpBlockedReplyConn{writer: a, started: make(chan struct{})}
+	l := &UDPListener{conn: conn, IdleTimeout: time.Hour, writeToken: make(chan struct{}, 1)}
+	l.writeToken <- struct{}{}
+	s := &udpSession{ctx: ctx}
+	done := make(chan error, 1)
+	go func() { _, err := l.writeReply(s, []byte("blocked")); done <- err }()
+	select {
+	case <-conn.started:
+	case <-time.After(time.Second):
+		t.Fatal("reply did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expired write succeeded")
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("session cancellation left the shared reply writer blocked")
+	}
+	// A cancellation callback must finish before the next session sets its
+	// deadline, otherwise it can poison an unrelated client's write.
+	go func() { _, err := l.writeReply(&udpSession{ctx: context.Background()}, []byte("healthy")); done <- err }()
+	b.SetReadDeadline(time.Now().Add(time.Second))
+	got := make([]byte, len("healthy"))
+	if _, err := io.ReadFull(b, got); err != nil || string(got) != "healthy" {
+		t.Fatalf("next reply: %q %v", got, err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func startUDP(t *testing.T, l *UDPListener) string {
@@ -127,6 +313,24 @@ func TestUDPDatagramBoundaries(t *testing.T) {
 				t.Fatalf("status: %+v", st)
 			}
 		})
+	}
+}
+
+func TestUDPIPv6ToIPv4OversizedPacketPreservesSession(t *testing.T) {
+	probe, err := net.ListenPacket("udp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 unavailable: %v", err)
+	}
+	probe.Close()
+	l := &UDPListener{Iface: Endpoint{Family: FamilyIPv6, Host: "::1", Port: "0"}, Peer: udpEcho(t, "udp4", "127.0.0.1:0")}
+	c := udpClient(t, startUDP(t, l))
+	if _, err := c.Write(bytes.Repeat([]byte{42}, 65527)); err != nil {
+		t.Fatal(err)
+	}
+	eventuallyUDP(t, func() bool { return l.Status().DroppedDatagrams == 1 })
+	udpExchange(t, c, []byte("same session after IPv4 payload limit"))
+	if l.Status().CreatedSessions != 1 {
+		t.Fatal("oversized datagram destroyed the upstream mapping")
 	}
 }
 
@@ -240,6 +444,45 @@ func TestUDPIdleCancelsDial(t *testing.T) {
 		t.Fatal("idle dial remained pending")
 	}
 	eventuallyUDP(t, func() bool { return l.Status().ActiveSessions == 0 })
+}
+
+func TestUDPGlobalQueueBudgetAndReclamation(t *testing.T) {
+	var calls atomic.Int32
+	l := &UDPListener{Iface: Endpoint{Host: "127.0.0.1", Port: "0"}, Peer: Endpoint{Host: "127.0.0.1", Port: "9"},
+		MaxQueuedBytes: 8192, IdleTimeout: 100 * time.Millisecond,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			calls.Add(1)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	addr := startUDP(t, l)
+	first, second := udpClient(t, addr), udpClient(t, addr)
+	payload := bytes.Repeat([]byte{42}, 4096)
+	for _, c := range []net.Conn{first, second} {
+		if _, err := c.Write(payload); err != nil {
+			t.Fatal(err)
+		}
+	}
+	eventuallyUDP(t, func() bool { return l.Status().QueuedBytes == 8192 && calls.Load() == 2 })
+	if _, err := first.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	eventuallyUDP(t, func() bool { return l.Status().DroppedDatagrams == 1 })
+	if st := l.Status(); st.QueuedBytes > 8192 || st.ActiveSessions != 2 {
+		t.Fatalf("queue budget: %+v", st)
+	}
+	eventuallyUDP(t, func() bool { st := l.Status(); return st.QueuedBytes == 0 && st.ActiveSessions == 0 })
+	if _, err := first.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	eventuallyUDP(t, func() bool { st := l.Status(); return st.QueuedBytes == len(payload) && st.CreatedSessions == 3 })
+	if err := l.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if l.Status().QueuedBytes != 0 {
+		t.Fatal("Stop retained queued payloads")
+	}
 }
 
 func TestUDPStopRejectsLateDial(t *testing.T) {

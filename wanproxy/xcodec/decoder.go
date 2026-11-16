@@ -2,6 +2,7 @@ package xcodec
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -89,7 +90,7 @@ func (d *Decoder) Decode(chunk []byte) DecodeResult {
 			d.buf = d.buf[2+SegmentLength:]
 
 		case OpRef:
-			if len(d.buf) < 2+8 {
+			if len(d.buf) < RefFrameSize {
 				goto done
 			}
 			hash := binary.BigEndian.Uint64(d.buf[2:10])
@@ -103,8 +104,12 @@ func (d *Decoder) Decode(chunk []byte) DecodeResult {
 					Unknown:  unknown,
 				}
 			}
+			digest := sha256.Sum256(oseg)
+			if !bytes.Equal(digest[:], d.buf[10:RefFrameSize]) {
+				return DecodeResult{Output: output, Consumed: before + len(chunk) - len(d.buf), Err: ErrIntegrity}
+			}
 
-			d.buf = d.buf[10:]
+			d.buf = d.buf[RefFrameSize:]
 			d.window.Declare(hash, oseg)
 			output = append(output, oseg...)
 
@@ -176,14 +181,14 @@ func (d *Decoder) skim(missing uint64) []uint64 {
 			defined[hash] = true
 			buf = buf[2+SegmentLength:]
 		case OpRef:
-			if len(buf) < 10 {
+			if len(buf) < RefFrameSize {
 				return sortedHashes(unknown)
 			}
 			hash := binary.BigEndian.Uint64(buf[2:10])
 			if !d.cache.Has(hash) && !defined[hash] {
 				unknown[hash] = true
 			}
-			buf = buf[10:]
+			buf = buf[RefFrameSize:]
 		case OpBackref:
 			if len(buf) < 3 {
 				return sortedHashes(unknown)

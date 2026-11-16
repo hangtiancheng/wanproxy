@@ -176,7 +176,8 @@
         "port": 8341
       },
       "peerCodec": "ssh-a",
-      "hostKey": "ssh-hostkey.pem"
+      "hostKey": "ssh-hostkey.pem",
+      "peerHostKeyFingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     },
     {
       "name": "proxy-ssh-b",
@@ -190,7 +191,8 @@
         "port": 8349
       },
       "interfaceCodec": "ssh-b",
-      "hostKey": "ssh-hostkey.pem"
+      "hostKey": "ssh-hostkey.pem",
+      "peerHostKeyFingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     }
   ],
   "monitor": {

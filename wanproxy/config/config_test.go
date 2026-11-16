@@ -54,7 +54,7 @@ func TestCompleteJSONConfig(t *testing.T) {
  "proxies":[
   {"name":"tcp","type":"tcp","listen":{"host":"127.0.0.1","port":0},"upstream":{"family":"ipv6","host":"::1","port":3301},"peerCodec":"encode","interfaceCodec":"decode"},
   {"name":"udp","type":"udp","listen":{"family":"ipv4","host":"127.0.0.1","port":0},"upstream":{"host":"localhost","port":53},"idleTimeoutSeconds":10,"maxSessions":12},
-  {"name":"ssh","type":"ssh","listen":{"host":"127.0.0.1","port":0},"upstream":{"host":"localhost","port":3301},"hostKey":%q,"handshakeTimeoutSeconds":3},
+  {"name":"ssh","type":"ssh","listen":{"host":"127.0.0.1","port":0},"upstream":{"host":"localhost","port":3301},"hostKey":%q,"peerHostKeyFingerprint":"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","handshakeTimeoutSeconds":3},
   {"name":"socks","type":"socks","listen":{"family":"unix","path":"/tmp/wanproxy-test.sock"}}
  ],"monitor":{"listen":{"host":"127.0.0.1","port":0}}
  }`, disk, key)

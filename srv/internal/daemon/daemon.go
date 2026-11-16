@@ -22,6 +22,7 @@ import (
 
 	"github.com/hangtiancheng/wanproxy/srv/internal/bench"
 	"github.com/hangtiancheng/wanproxy/srv/internal/paths"
+	wanproxyssh "github.com/hangtiancheng/wanproxy/wanproxy/ssh"
 )
 
 type Daemon struct {
@@ -116,6 +117,18 @@ func ensureHostKey() error {
 }
 
 func renderConfig() error {
+	keyData, err := os.ReadFile(paths.HostKeyPath)
+	if err != nil {
+		return fmt.Errorf("read demo SSH key: %w", err)
+	}
+	key, err := wanproxyssh.LoadRSAPrivateKeyPEM(keyData)
+	if err != nil {
+		return err
+	}
+	fingerprint, err := wanproxyssh.PublicKeyFingerprint(&key.PublicKey)
+	if err != nil {
+		return err
+	}
 	data, err := os.ReadFile(paths.ExampleConfigPath)
 	if err != nil {
 		return fmt.Errorf("read example configuration: %w", err)
@@ -143,6 +156,8 @@ func renderConfig() error {
 					}
 				case "hostKey":
 					node[key] = paths.HostKeyPath
+				case "peerHostKeyFingerprint":
+					node[key] = fingerprint
 				}
 				apply(value)
 			}

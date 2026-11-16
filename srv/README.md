@@ -125,3 +125,8 @@ Runtime state lives in `data/` (files, config, host key, XCDFS disk cache,
 ```bash
 go build ./... && go vet ./... && go test ./...
 ```
+
+SSH benchmarks pin the demo host key by default. Set
+`SSH_PEER_HOST_KEY_FINGERPRINT` to the trusted OpenSSH SHA256 fingerprint
+when benchmarking an external SSH proxy. The generated daemon configuration
+includes the pins for both SSH hops.

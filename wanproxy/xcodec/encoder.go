@@ -1,6 +1,9 @@
 package xcodec
 
-import "encoding/binary"
+import (
+	"crypto/sha256"
+	"encoding/binary"
+)
 
 type Encoder struct {
 	cache        Cache
@@ -148,6 +151,8 @@ func (e *Encoder) encodeReference(output []byte, hash uint64, segment []byte, re
 	var be [8]byte
 	binary.BigEndian.PutUint64(be[:], hash)
 	output = append(output, be[:]...)
+	digest := sha256.Sum256(segment)
+	output = append(output, digest[:]...)
 
 	e.window.Declare(hash, segment)
 

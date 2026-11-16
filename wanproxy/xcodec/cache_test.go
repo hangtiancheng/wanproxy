@@ -42,9 +42,6 @@ func TestMemoryCacheConnectIsolatesPeers(t *testing.T) {
 	if a == b {
 		t.Fatalf("distinct peers must get distinct caches")
 	}
-	if cache.Connect(idA) != a {
-		t.Fatalf("same peer must reuse its cache")
-	}
 
 	seg := repeatedSegment(9, 1)
 	hash := HashSegment(seg)
@@ -54,6 +51,29 @@ func TestMemoryCacheConnectIsolatesPeers(t *testing.T) {
 	}
 	if !a.Has(hash) {
 		t.Fatalf("peer A lost its segment")
+	}
+	if !cache.Connect(idA).Has(hash) {
+		t.Fatal("same peer must reuse its namespace")
+	}
+}
+
+func TestMemoryCacheSharesBudgetAcrossPeers(t *testing.T) {
+	cache := NewMemoryCache(WithSegmentLimit(2))
+	a, b := cache.Connect(CacheID{1}), cache.Connect(CacheID{2})
+	seg := repeatedSegment(9, 1)
+	hash := HashSegment(seg)
+	a.Enter(hash, seg)
+	b.Enter(hash, seg)
+	cache.Enter(hash, seg)
+	if a.Has(hash) || !b.Has(hash) || !cache.Has(hash) {
+		t.Fatal("namespace entries did not share a global LRU")
+	}
+	for i := range 1000 {
+		id := CacheID{byte(i), byte(i >> 8)}
+		cache.Connect(id).Enter(hash, seg)
+	}
+	if len(cache.store.entries) != 2 || len(cache.store.counts) > 2 {
+		t.Fatalf("unbounded peer retention: entries=%d namespaces=%d", len(cache.store.entries), len(cache.store.counts))
 	}
 }
 
@@ -106,8 +126,8 @@ func TestOutOfBandEncoderEmitsReferences(t *testing.T) {
 	enc := NewEncoder(cache)
 	input := repeatedSegment(0x33, 2)
 	encoded := enc.Encode(input)
-	if len(encoded) != 20 {
-		t.Fatalf("out-of-band encode length = %d, want two REFs", len(encoded))
+	if len(encoded) != 2*RefFrameSize {
+		t.Fatalf("out-of-band encode length = %d, want two REFs with SHA256 tags", len(encoded))
 	}
 
 	segment := repeatedSegment(0x33, 1)

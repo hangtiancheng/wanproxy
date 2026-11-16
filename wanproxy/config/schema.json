@@ -290,6 +290,11 @@
           "type": "string",
           "minLength": 1
         },
+        "peerHostKeyFingerprint": {
+          "type": "string",
+          "pattern": "^SHA256:[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]$",
+          "description": "Pinned OpenSSH SHA256 fingerprint of the upstream server's host public key."
+        },
         "handshakeTimeoutSeconds": {
           "type": "integer",
           "minimum": 1,
@@ -307,6 +312,19 @@
           "minimum": 1,
           "maximum": 65536,
           "default": 1024
+        },
+        "maxConnections": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536,
+          "default": 1024
+        },
+        "maxQueuedBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1073741824,
+          "default": 8388608,
+          "description": "Total queued client datagram payload bytes across all sessions of this UDP listener."
         }
       },
       "required": ["name", "type", "listen"],
@@ -362,13 +380,16 @@
             }
           },
           "then": {
-            "required": ["hostKey"]
+            "required": ["hostKey", "peerHostKeyFingerprint"]
           },
           "else": {
             "not": {
               "anyOf": [
                 {
                   "required": ["hostKey"]
+                },
+                {
+                  "required": ["peerHostKeyFingerprint"]
                 }
               ]
             }
@@ -402,6 +423,7 @@
           },
           "then": {
             "properties": {
+              "maxConnections": false,
               "listen": {
                 "$ref": "#/$defs/ipEndpoint"
               },
@@ -429,6 +451,9 @@
                 },
                 {
                   "required": ["maxSessions"]
+                },
+                {
+                  "required": ["maxQueuedBytes"]
                 }
               ]
             }

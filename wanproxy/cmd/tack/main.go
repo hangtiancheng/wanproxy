@@ -436,12 +436,14 @@ func printRatio(name string, inbytes, outbytes uint64, stderr io.Writer) {
 type persistentCache struct {
 	mem      *xcodec.MemoryCache
 	f        *os.File
-	newData  []byte
+	index    map[uint64]int64
+	next     int64
+	writeErr error
 	readOnly bool
 }
 
 func newPersistentCache(f *os.File) (*persistentCache, error) {
-	c := &persistentCache{mem: xcodec.NewMemoryCache(), f: f}
+	c := &persistentCache{mem: xcodec.NewMemoryCache(), f: f, index: make(map[uint64]int64)}
 	seg := make([]byte, xcodec.SegmentLength)
 	for {
 		n, err := io.ReadFull(f, seg)
@@ -455,38 +457,50 @@ func newPersistentCache(f *os.File) (*persistentCache, error) {
 			return nil, fmt.Errorf("corrupt persistent cache: %w", err)
 		}
 		hash := xcodec.HashSegment(seg)
+		c.index[hash] = c.next
+		c.next += int64(len(seg))
 		c.mem.Enter(hash, seg)
 	}
 	return c, nil
 }
 
-func (c *persistentCache) Close() error {
-	if len(c.newData) > 0 && c.f != nil {
-		if _, err := c.f.Write(c.newData); err != nil {
-			return fmt.Errorf("could not flush persistent cache: %w", err)
-		}
-		c.newData = nil
+func (c *persistentCache) Close() error { return c.writeErr }
+func (c *persistentCache) Lookup(hash uint64) []byte {
+	if seg := c.mem.Lookup(hash); seg != nil {
+		return seg
 	}
-	return nil
+	offset, ok := c.index[hash]
+	if !ok {
+		return nil
+	}
+	seg := make([]byte, xcodec.SegmentLength)
+	if _, err := c.f.ReadAt(seg, offset); err != nil || xcodec.HashSegment(seg) != hash {
+		return nil
+	}
+	c.mem.Enter(hash, seg)
+	return seg
 }
-
-func (c *persistentCache) Lookup(hash uint64) []byte     { return c.mem.Lookup(hash) }
-func (c *persistentCache) Has(hash uint64) bool          { return c.mem.Has(hash) }
-func (c *persistentCache) Size() int                     { return c.mem.Size() }
-func (c *persistentCache) Touch(hash uint64, seg []byte) {}
-func (c *persistentCache) OutOfBand() bool               { return true }
+func (c *persistentCache) Has(hash uint64) bool { return c.Lookup(hash) != nil }
+func (c *persistentCache) Size() int            { return len(c.index) }
+func (c *persistentCache) Touch(uint64, []byte) {}
+func (c *persistentCache) OutOfBand() bool      { return true }
 func (c *persistentCache) Connect(id xcodec.CacheID) xcodec.Cache {
 	panic("tack: persistent cache does not support connect")
 }
 func (c *persistentCache) ID() xcodec.CacheID { return c.mem.ID() }
-
 func (c *persistentCache) Enter(hash uint64, segment []byte) {
 	c.mem.Enter(hash, segment)
-	if !c.readOnly {
-		c.newData = append(c.newData, segment...)
+	if !c.readOnly && c.writeErr == nil {
+		n, err := c.f.WriteAt(segment, c.next)
+		if err == nil && n != len(segment) {
+			err = io.ErrShortWrite
+		}
+		if err != nil {
+			c.writeErr = fmt.Errorf("could not write persistent cache: %w", err)
+			return
+		}
+		c.index[hash] = c.next
+		c.next += int64(n)
 	}
 }
-
-func (c *persistentCache) Replace(hash uint64, segment []byte) {
-	c.Enter(hash, segment)
-}
+func (c *persistentCache) Replace(hash uint64, segment []byte) { c.Enter(hash, segment) }

@@ -104,7 +104,7 @@ func TestSessionRejectsProtocolViolations(t *testing.T) {
 		fn   func(s *Session) error
 	}{
 		{"frame before hello", func(s *Session) error {
-			_, err := s.Receive([]byte{PipeOpFrame, 0, 0, 0, 1, 0xaa})
+			_, err := s.Receive(AppendPipeFrame(nil, []byte{0xaa}, []byte{0xaa}))
 			return err
 		}},
 		{"ask before hello sent", func(s *Session) error {
@@ -218,7 +218,7 @@ func blockedAskExchange(t *testing.T, a *Session, bCache Cache, input []byte) (*
 	refWire := mustEncode(t, a, input)
 
 	b := NewSession(bCache)
-	hello := firstWire[:2+PipeHelloIDLength]
+	hello := firstWire[:PipeHelloSize]
 	res := mustReceive(t, b, append(append([]byte{}, hello...), refWire...))
 	if len(res.Output) != 0 {
 		t.Fatalf("B should block on the unknown reference, got %d bytes", len(res.Output))

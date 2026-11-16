@@ -19,13 +19,29 @@ type listenerState struct {
 	active              map[net.Conn]struct{}
 	acceptedConnections int64
 	stopped             bool
+	activeClients       int
 }
 
-func (s *listenerState) start(ep Endpoint, log *slog.Logger, name string, handle func(net.Conn)) error {
+const DefaultMaxConnections = 1024
+
+func proxyLogger(log *slog.Logger) *slog.Logger {
+	if log == nil {
+		return slog.Default()
+	}
+	return log
+}
+
+func (s *listenerState) start(ep Endpoint, log *slog.Logger, name string, maxConnections int, handle func(net.Conn)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopped || s.listener != nil {
 		return fmt.Errorf("proxy %q: listener already started or stopped", name)
+	}
+	if maxConnections < 0 {
+		return fmt.Errorf("proxy %q: negative connection limit", name)
+	}
+	if maxConnections == 0 {
+		maxConnections = DefaultMaxConnections
 	}
 	ln, err := net.Listen(ep.Network(), ep.Addr())
 	if err != nil {
@@ -37,26 +53,40 @@ func (s *listenerState) start(ep Endpoint, log *slog.Logger, name string, handle
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		defer s.shutdown()
+		var backoff time.Duration
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
+				var ne net.Error
+				if errors.As(err, &ne) && ne.Temporary() && waitNetworkRetry(s.ctx, &backoff) {
+					continue
+				}
 				if !errors.Is(err, net.ErrClosed) {
 					log.Debug("accept stopped", "proxy", name, "error", err)
 				}
 				return
 			}
+			backoff = 0
 			s.mu.Lock()
 			if s.stopped {
 				s.mu.Unlock()
 				conn.Close()
 				return
 			}
+			if s.activeClients >= maxConnections {
+				s.mu.Unlock()
+				conn.Close()
+				continue
+			}
+			s.activeClients++
 			s.acceptedConnections++
 			s.active[conn] = struct{}{}
 			s.wg.Add(1)
 			s.mu.Unlock()
 			go func() {
 				defer s.wg.Done()
+				defer func() { s.mu.Lock(); s.activeClients--; s.mu.Unlock() }()
 				handle(conn)
 			}()
 		}
@@ -82,7 +112,7 @@ func (s *listenerState) drop(conn net.Conn) {
 	s.mu.Unlock()
 }
 
-func (s *listenerState) Stop() error {
+func (s *listenerState) shutdown() error {
 	s.mu.Lock()
 	s.stopped = true
 	if s.cancel != nil {
@@ -104,6 +134,11 @@ func (s *listenerState) Stop() error {
 	for _, conn := range conns {
 		conn.Close()
 	}
+	return err
+}
+
+func (s *listenerState) Stop() error {
+	err := s.shutdown()
 	s.wg.Wait()
 	return err
 }
@@ -135,13 +170,23 @@ func (s *listenerState) ActiveSockets() int {
 	return len(s.active)
 }
 
-func dialPeer(ctx context.Context, dialContext func(context.Context, string, string) (net.Conn, error), dial func(string, string) (net.Conn, error), network, addr string) (net.Conn, error) {
-	if dialContext != nil {
-		return dialContext(ctx, network, addr)
+func dialPeer(ctx context.Context, dialContext func(context.Context, string, string) (net.Conn, error), network, addr string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if dialContext == nil {
+		d := &net.Dialer{KeepAlive: 30 * time.Second}
+		dialContext = d.DialContext
 	}
-	if dial != nil {
-		return dial(network, addr)
+	conn, err := dialContext(ctx, network, addr)
+	if err == nil {
+		err = ctx.Err()
 	}
-	d := net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
-	return d.DialContext(ctx, network, addr)
+	if err == nil && conn == nil {
+		err = errors.New("proxy: dial returned no connection")
+	}
+	if err != nil && conn != nil {
+		conn.Close()
+		conn = nil
+	}
+	return conn, err
 }

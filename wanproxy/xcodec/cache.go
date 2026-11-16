@@ -33,13 +33,24 @@ type memoryEntry struct {
 	element *list.Element
 }
 
+const DefaultMemoryCacheBytes = 64 << 20
+
+type memoryKey struct {
+	id   CacheID
+	hash uint64
+}
+
+type memoryStore struct {
+	mu      sync.Mutex
+	limit   int
+	entries map[memoryKey]*memoryEntry
+	counts  map[CacheID]int
+	lru     *list.List
+}
+
 type MemoryCache struct {
-	mu       sync.Mutex
-	id       CacheID
-	limit    int
-	entries  map[uint64]*memoryEntry
-	lru      *list.List
-	children map[CacheID]*MemoryCache
+	id    CacheID
+	store *memoryStore
 }
 
 type MemoryCacheOption func(*MemoryCache)
@@ -47,7 +58,7 @@ type MemoryCacheOption func(*MemoryCache)
 func WithSegmentLimit(n int) MemoryCacheOption {
 	return func(c *MemoryCache) {
 		if n > 0 {
-			c.limit = n
+			c.store.limit = n
 		}
 	}
 }
@@ -58,9 +69,12 @@ func WithCacheID(id CacheID) MemoryCacheOption {
 
 func NewMemoryCache(opts ...MemoryCacheOption) *MemoryCache {
 	c := &MemoryCache{
-		entries:  make(map[uint64]*memoryEntry),
-		lru:      list.New(),
-		children: make(map[CacheID]*MemoryCache),
+		store: &memoryStore{
+			limit:   DefaultMemoryCacheBytes / SegmentLength,
+			entries: make(map[memoryKey]*memoryEntry),
+			counts:  make(map[CacheID]int),
+			lru:     list.New(),
+		},
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -76,7 +90,7 @@ func NewMemoryCache(opts ...MemoryCacheOption) *MemoryCache {
 func NewMemoryCacheWithBytes(id CacheID, limitBytes int64, opts ...MemoryCacheOption) *MemoryCache {
 	limit := 0
 	if limitBytes > 0 {
-		limit = int(limitBytes / SegmentLength)
+		limit = int(min(limitBytes/SegmentLength, int64(int(^uint(0)>>1))))
 		if limit == 0 {
 			limit = 1
 		}
@@ -86,79 +100,74 @@ func NewMemoryCacheWithBytes(id CacheID, limitBytes int64, opts ...MemoryCacheOp
 }
 
 func (c *MemoryCache) Lookup(hash uint64) []byte {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	entry, ok := c.entries[hash]
+	s := c.store
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.entries[memoryKey{c.id, hash}]
 	if !ok {
 		return nil
 	}
-	if entry.element != nil {
-		c.lru.MoveToFront(entry.element)
-	}
+	s.lru.MoveToFront(entry.element)
 	return entry.segment
 }
 
 func (c *MemoryCache) Has(hash uint64) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	_, ok := c.entries[hash]
+	s := c.store
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.entries[memoryKey{c.id, hash}]
 	return ok
 }
 
 func (c *MemoryCache) Size() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return len(c.entries)
+	s := c.store
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.counts[c.id]
 }
 
 func (c *MemoryCache) Enter(hash uint64, segment []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.store.mu.Lock()
+	defer c.store.mu.Unlock()
 	c.enterLocked(hash, segment)
 }
 
 func (c *MemoryCache) Replace(hash uint64, segment []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if entry, ok := c.entries[hash]; ok {
-		entry.segment = cloneSegment(segment)
-		if entry.element != nil {
-			c.lru.MoveToFront(entry.element)
-		}
-		return
-	}
-	c.enterLocked(hash, segment)
+	c.Enter(hash, segment)
 }
 
 func (c *MemoryCache) enterLocked(hash uint64, segment []byte) {
 	if len(segment) != SegmentLength {
 		panic("xcodec: cache segment must be exactly 2048 bytes")
 	}
-	if entry, ok := c.entries[hash]; ok {
+	s := c.store
+	key := memoryKey{c.id, hash}
+	if entry, ok := s.entries[key]; ok {
 		entry.segment = cloneSegment(segment)
-		if entry.element != nil {
-			c.lru.MoveToFront(entry.element)
-		}
+		s.lru.MoveToFront(entry.element)
 		return
 	}
-	if c.limit > 0 && len(c.entries) >= c.limit {
-		c.evictOldestLocked()
+	if len(s.entries) >= s.limit {
+		s.evictOldestLocked()
 	}
 	entry := &memoryEntry{segment: cloneSegment(segment)}
-	if c.limit > 0 {
-		entry.element = c.lru.PushFront(hash)
-	}
-	c.entries[hash] = entry
+	entry.element = s.lru.PushFront(key)
+	s.entries[key] = entry
+	s.counts[c.id]++
 }
 
-func (c *MemoryCache) evictOldestLocked() {
-	back := c.lru.Back()
+func (s *memoryStore) evictOldestLocked() {
+	back := s.lru.Back()
 	if back == nil {
 		return
 	}
-	hash := back.Value.(uint64)
-	c.lru.Remove(back)
-	delete(c.entries, hash)
+	key := back.Value.(memoryKey)
+	s.lru.Remove(back)
+	delete(s.entries, key)
+	s.counts[key.id]--
+	if s.counts[key.id] == 0 {
+		delete(s.counts, key.id)
+	}
 }
 
 func (c *MemoryCache) Touch(uint64, []byte) {}
@@ -166,14 +175,9 @@ func (c *MemoryCache) Touch(uint64, []byte) {}
 func (c *MemoryCache) OutOfBand() bool { return false }
 
 func (c *MemoryCache) Connect(id CacheID) Cache {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if child, ok := c.children[id]; ok {
-		return child
-	}
-	child := NewMemoryCache(WithCacheID(id), WithSegmentLimit(c.limit))
-	c.children[id] = child
-	return child
+	// Namespace handles carry no retained peer registry. Every namespace
+	// shares the same LRU and budget, including the local encoder cache.
+	return &MemoryCache{id: id, store: c.store}
 }
 
 func (c *MemoryCache) ID() CacheID { return c.id }

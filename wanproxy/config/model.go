@@ -13,16 +13,19 @@ import (
 )
 
 type ProxyConfig struct {
-	Name             string
-	Type             string
-	Listen           proxy.Endpoint
-	Upstream         proxy.Endpoint
-	InterfaceCodec   *pipeline.CodecSpec
-	PeerCodec        *pipeline.CodecSpec
-	HostKey          *rsa.PrivateKey
-	HandshakeTimeout time.Duration
-	IdleTimeout      time.Duration
-	MaxSessions      int
+	Name                   string
+	Type                   string
+	Listen                 proxy.Endpoint
+	Upstream               proxy.Endpoint
+	InterfaceCodec         *pipeline.CodecSpec
+	PeerCodec              *pipeline.CodecSpec
+	HostKey                *rsa.PrivateKey
+	PeerHostKeyFingerprint string
+	HandshakeTimeout       time.Duration
+	IdleTimeout            time.Duration
+	MaxSessions            int
+	MaxQueuedBytes         int
+	MaxConnections         int
 }
 
 type LogMask struct {
@@ -63,13 +66,13 @@ func (c *Config) NewFleet(log *slog.Logger) *proxy.Fleet {
 		proxyLog := f.Log.With("proxy", p.Name)
 		switch p.Type {
 		case "udp":
-			f.AddUDP(&proxy.UDPListener{Name: p.Name, Iface: p.Listen, Peer: p.Upstream, IdleTimeout: p.IdleTimeout, MaxSessions: p.MaxSessions, Log: proxyLog})
+			f.AddUDP(&proxy.UDPListener{Name: p.Name, Iface: p.Listen, Peer: p.Upstream, IdleTimeout: p.IdleTimeout, MaxSessions: p.MaxSessions, MaxQueuedBytes: p.MaxQueuedBytes, Log: proxyLog})
 		case "socks":
-			f.AddSocks(&proxy.SocksListener{Name: p.Name, Iface: p.Listen, HandshakeTimeout: p.HandshakeTimeout, Log: proxyLog})
+			f.AddSocks(&proxy.SocksListener{Name: p.Name, Iface: p.Listen, HandshakeTimeout: p.HandshakeTimeout, MaxConnections: p.MaxConnections, Log: proxyLog})
 		default:
-			l := &proxy.Listener{Name: p.Name, Iface: p.Listen, Peer: p.Upstream, IfaceCodec: p.InterfaceCodec, PeerCodec: p.PeerCodec, Log: proxyLog}
+			l := &proxy.Listener{Name: p.Name, Iface: p.Listen, Peer: p.Upstream, IfaceCodec: p.InterfaceCodec, PeerCodec: p.PeerCodec, MaxConnections: p.MaxConnections, Log: proxyLog}
 			if p.Type == "ssh" {
-				l.SSH = &proxy.SSHSettings{HostKey: p.HostKey, HandshakeTimeout: p.HandshakeTimeout}
+				l.SSH = &proxy.SSHSettings{HostKey: p.HostKey, PeerHostKeyFingerprint: p.PeerHostKeyFingerprint, HandshakeTimeout: p.HandshakeTimeout}
 			}
 			f.AddTCP(l)
 		}

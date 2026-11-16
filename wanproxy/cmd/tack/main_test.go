@@ -87,6 +87,42 @@ func TestTackCompressDecompressRoundtrip(t *testing.T) {
 	}
 }
 
+func TestPersistentCacheSurvivesMemoryEviction(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "dictionary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	cache, err := newPersistentCache(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.mem = xcodec.NewMemoryCache(xcodec.WithSegmentLimit(1))
+	a, b := bytes.Repeat([]byte{1}, xcodec.SegmentLength), bytes.Repeat([]byte{2}, xcodec.SegmentLength)
+	cache.Enter(xcodec.HashSegment(a), a)
+	cache.Enter(xcodec.HashSegment(b), b)
+	for _, seg := range [][]byte{a, b, a} {
+		if !bytes.Equal(cache.Lookup(xcodec.HashSegment(seg)), seg) {
+			t.Fatal("evicted dictionary segment not loaded from disk")
+		}
+	}
+	if err := cache.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := newPersistentCache(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened.readOnly = true
+	reopened.mem = xcodec.NewMemoryCache(xcodec.WithSegmentLimit(1))
+	if !bytes.Equal(reopened.Lookup(xcodec.HashSegment(a)), a) || !bytes.Equal(reopened.Lookup(xcodec.HashSegment(b)), b) {
+		t.Fatal("reopened dictionary lost segments")
+	}
+}
+
 func TestTackNullCache(t *testing.T) {
 	payload := repetitivePayload()
 	compressed, _, err := tackRun(t, []string{"-N", "-c"}, payload)

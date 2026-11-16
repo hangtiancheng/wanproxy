@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -18,20 +19,20 @@ type SocksListener struct {
 	Iface            Endpoint
 	Log              *slog.Logger
 	DialContext      func(context.Context, string, string) (net.Conn, error)
-	Dial             func(network, addr string) (net.Conn, error)
 	HandshakeTimeout time.Duration
+	MaxConnections   int
 
 	listenerState
 }
 
 func (l *SocksListener) Start() error {
+	if l.HandshakeTimeout < 0 {
+		return fmt.Errorf("socks proxy %q: negative handshake timeout", l.Name)
+	}
 	if !l.Iface.Valid() {
 		return fmt.Errorf("socks proxy %q: interface endpoint is incomplete", l.Name)
 	}
-	if l.Log == nil {
-		l.Log = slog.Default()
-	}
-	return l.start(l.Iface, l.Log, l.Name, l.handle)
+	return l.start(l.Iface, proxyLogger(l.Log), l.Name, l.MaxConnections, l.handle)
 }
 
 func (l *SocksListener) handle(client net.Conn) {
@@ -41,20 +42,23 @@ func (l *SocksListener) handle(client net.Conn) {
 	if timeout == 0 {
 		timeout = 15 * time.Second
 	}
-	if err := client.SetDeadline(time.Now().Add(timeout)); err != nil {
+	ctx, cancel := context.WithTimeout(l.ctx, timeout)
+	defer cancel()
+	deadline, _ := ctx.Deadline()
+	if err := client.SetDeadline(deadline); err != nil {
 		return
 	}
 	request, err := readSocksConnectRequest(client)
 	if err != nil {
-		l.Log.Debug("socks handshake failed", "proxy", l.Name, "error", err)
+		proxyLogger(l.Log).Debug("socks handshake failed", "proxy", l.Name, "error", err)
 		client.Close()
 		return
 	}
 
 	network, addr := request.networkAddr()
-	upstream, err := dialPeer(l.ctx, l.DialContext, l.Dial, network, addr)
+	upstream, err := dialPeer(ctx, l.DialContext, network, addr)
 	if err != nil {
-		l.Log.Debug("could not connect to socks target", "proxy", l.Name, "target", addr, "error", err)
+		proxyLogger(l.Log).Debug("could not connect to socks target", "proxy", l.Name, "target", addr, "error", err)
 		_ = writeFull(client, request.failureResponse(err))
 		return
 	}
@@ -62,28 +66,37 @@ func (l *SocksListener) handle(client net.Conn) {
 		return
 	}
 	defer l.drop(upstream)
+	if ctx.Err() != nil {
+		return
+	}
 	if err := writeFull(client, request.successResponse(upstream.LocalAddr())); err != nil {
 		return
 	}
 	if err := client.SetDeadline(time.Time{}); err != nil {
 		return
 	}
+	cancel()
 
-	relay, err := NewRelay(client, upstream, nil, nil, l.Log)
+	var source net.Conn = client
+	if len(request.buffered) > 0 {
+		source = &socksBufferedConn{Conn: client, reader: io.MultiReader(bytes.NewReader(request.buffered), client)}
+	}
+	relay, err := NewRelay(source, upstream, nil, nil, l.Log)
 	if err != nil {
 		client.Close()
 		upstream.Close()
 		return
 	}
-	if len(request.buffered) > 0 {
-		if err := writeFull(upstream, request.buffered); err != nil {
-			client.Close()
-			upstream.Close()
-			return
-		}
-	}
 	relay.Run()
 }
+
+type socksBufferedConn struct {
+	net.Conn
+	reader io.Reader
+}
+
+func (c *socksBufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+func (c *socksBufferedConn) CloseWrite() error          { return closeWrite(c.Conn) }
 
 type socksConnectRequest struct {
 	version  int
@@ -116,6 +129,9 @@ func readSocksConnectRequest(conn net.Conn) (*socksConnectRequest, error) {
 		var req *socksConnectRequest
 		if version == 0x04 {
 			req, err = readSocks4Request(br)
+			if err != nil {
+				_ = writeFull(conn, (&socksConnectRequest{version: 4}).failureResponse(err))
+			}
 		} else {
 			req, err = readSocks5Request(conn, br)
 		}
@@ -148,10 +164,16 @@ func readSocks4Request(br *bufio.Reader) (*socksConnectRequest, error) {
 		return nil, err
 	}
 	port := binary.BigEndian.Uint16(portBuf[:])
+	if port == 0 {
+		return nil, errors.New("SOCKS4 target port must be nonzero")
+	}
 
 	addr := make([]byte, 4)
 	if _, err := io.ReadFull(br, addr); err != nil {
 		return nil, err
+	}
+	if addr[0] == 0 && addr[1] == 0 && addr[2] == 0 && addr[3] != 0 {
+		return nil, errors.New("SOCKS4A is not supported")
 	}
 
 	for length := 0; ; length++ {
@@ -207,8 +229,12 @@ func readSocks5Request(conn net.Conn, br *bufio.Reader) (*socksConnectRequest, e
 	if _, err := io.ReadFull(br, header[:]); err != nil {
 		return nil, err
 	}
-	if header[0] != 0x05 || header[1] != 0x01 || header[2] != 0x00 {
+	if header[0] != 0x05 || header[2] != 0x00 {
 		return nil, fmt.Errorf("unsupported SOCKS5 request header % x", header[:])
+	}
+	if header[1] != 0x01 {
+		_ = writeFull(conn, []byte{5, 7, 0, 1, 0, 0, 0, 0, 0, 0})
+		return nil, fmt.Errorf("unsupported SOCKS5 command %d", header[1])
 	}
 
 	req := &socksConnectRequest{version: 5, addrType: header[3]}
@@ -226,6 +252,7 @@ func readSocks5Request(conn net.Conn, br *bufio.Reader) (*socksConnectRequest, e
 			return nil, err
 		}
 		if length < 1 {
+			_ = writeFull(conn, []byte{5, 8, 0, 1, 0, 0, 0, 0, 0, 0})
 			return nil, errors.New("invalid SOCKS5 domain length")
 		}
 		name := make([]byte, length)
@@ -241,6 +268,7 @@ func readSocks5Request(conn net.Conn, br *bufio.Reader) (*socksConnectRequest, e
 		req.rawAddr = addr
 		req.host = net.IP(addr).String()
 	default:
+		_ = writeFull(conn, []byte{5, 8, 0, 1, 0, 0, 0, 0, 0, 0})
 		return nil, fmt.Errorf("unsupported SOCKS5 address type %d", header[3])
 	}
 
@@ -249,6 +277,10 @@ func readSocks5Request(conn net.Conn, br *bufio.Reader) (*socksConnectRequest, e
 		return nil, err
 	}
 	req.port = binary.BigEndian.Uint16(portBuf[:])
+	if req.port == 0 {
+		_ = writeFull(conn, []byte{5, 1, 0, 1, 0, 0, 0, 0, 0, 0})
+		return nil, errors.New("SOCKS5 target port must be nonzero")
+	}
 
 	return req, nil
 }

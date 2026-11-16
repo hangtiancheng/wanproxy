@@ -51,9 +51,12 @@ type proxyConfig struct {
 	InterfaceCodec          *string   `json:"interfaceCodec,omitempty"`
 	PeerCodec               *string   `json:"peerCodec,omitempty"`
 	HostKey                 *string   `json:"hostKey,omitempty"`
+	PeerHostKeyFingerprint  *string   `json:"peerHostKeyFingerprint,omitempty"`
 	HandshakeTimeoutSeconds *int      `json:"handshakeTimeoutSeconds,omitempty"`
 	IdleTimeoutSeconds      *int      `json:"idleTimeoutSeconds,omitempty"`
 	MaxSessions             *int      `json:"maxSessions,omitempty"`
+	MaxQueuedBytes          *int      `json:"maxQueuedBytes,omitempty"`
+	MaxConnections          *int      `json:"maxConnections,omitempty"`
 }
 
 type logMaskConfig struct {
@@ -189,6 +192,15 @@ func loadProxy(p proxyConfig, codecs map[string]*pipeline.CodecSpec) (ProxyConfi
 	if err != nil {
 		return pc, fmt.Errorf("listen: %w", err)
 	}
+	if p.MaxConnections != nil {
+		if p.Type == "udp" {
+			return pc, fmt.Errorf("maxConnections is only valid for TCP/SSH/SOCKS")
+		}
+		if *p.MaxConnections < 1 || *p.MaxConnections > 65536 {
+			return pc, fmt.Errorf("maxConnections must be in 1..65536")
+		}
+		pc.MaxConnections = *p.MaxConnections
+	}
 	if p.Type == "socks" {
 		if p.Upstream != nil {
 			return pc, fmt.Errorf("SOCKS does not take an upstream")
@@ -217,6 +229,13 @@ func loadProxy(p proxyConfig, codecs map[string]*pipeline.CodecSpec) (ProxyConfi
 		}
 	}
 	if p.Type == "ssh" {
+		if p.PeerHostKeyFingerprint == nil {
+			return pc, fmt.Errorf("peerHostKeyFingerprint is required for SSH")
+		}
+		if err := wanproxyssh.ValidateHostKeyFingerprint(*p.PeerHostKeyFingerprint); err != nil {
+			return pc, err
+		}
+		pc.PeerHostKeyFingerprint = *p.PeerHostKeyFingerprint
 		if p.HostKey == nil || *p.HostKey == "" {
 			return pc, fmt.Errorf("hostKey is required for SSH")
 		}
@@ -228,8 +247,8 @@ func loadProxy(p proxyConfig, codecs map[string]*pipeline.CodecSpec) (ProxyConfi
 		if err != nil {
 			return pc, fmt.Errorf("hostKey: %w", err)
 		}
-	} else if p.HostKey != nil {
-		return pc, fmt.Errorf("hostKey is only valid for SSH")
+	} else if p.HostKey != nil || p.PeerHostKeyFingerprint != nil {
+		return pc, fmt.Errorf("hostKey/peerHostKeyFingerprint are only valid for SSH")
 	}
 	if p.HandshakeTimeoutSeconds != nil {
 		if p.Type != "ssh" && p.Type != "socks" {
@@ -259,8 +278,14 @@ func loadProxy(p proxyConfig, codecs map[string]*pipeline.CodecSpec) (ProxyConfi
 			}
 			pc.MaxSessions = *p.MaxSessions
 		}
-	} else if p.IdleTimeoutSeconds != nil || p.MaxSessions != nil {
-		return pc, fmt.Errorf("idleTimeoutSeconds/maxSessions are only valid for UDP")
+		if p.MaxQueuedBytes != nil {
+			if *p.MaxQueuedBytes < 1 || *p.MaxQueuedBytes > 1<<30 {
+				return pc, fmt.Errorf("maxQueuedBytes must be in 1..1073741824")
+			}
+			pc.MaxQueuedBytes = *p.MaxQueuedBytes
+		}
+	} else if p.IdleTimeoutSeconds != nil || p.MaxSessions != nil || p.MaxQueuedBytes != nil {
+		return pc, fmt.Errorf("idleTimeoutSeconds/maxSessions/maxQueuedBytes are only valid for UDP")
 	}
 	return pc, nil
 }

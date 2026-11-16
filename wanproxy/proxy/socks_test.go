@@ -188,8 +188,11 @@ func TestSocksRejectsBadHandshakes(t *testing.T) {
 		conn.Write(handshake)
 		buf := make([]byte, 16)
 		n, err := conn.Read(buf)
-		if err == nil && n > 0 && name != "socks5 no method" {
+		if err == nil && n > 0 && name == "bad version" {
 			t.Fatalf("%s: expected close, got % x", name, buf[:n])
+		}
+		if name == "socks4 bad cmd" && (n != 8 || buf[1] != 0x5b) {
+			t.Fatalf("SOCKS4 failure reply: %x", buf[:n])
 		}
 		conn.Close()
 	}
@@ -296,6 +299,34 @@ func TestSocksConnectFailure(t *testing.T) {
 	}
 }
 
+func TestSocksHandshakeTimeoutCancelsDial(t *testing.T) {
+	canceled := make(chan struct{})
+	l := &SocksListener{Iface: Endpoint{Host: "127.0.0.1", Port: "0"}, Log: testLogger(), HandshakeTimeout: 50 * time.Millisecond,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			<-ctx.Done()
+			close(canceled)
+			return nil, ctx.Err()
+		},
+	}
+	if err := l.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Stop() })
+	c, err := net.Dial("tcp", net.JoinHostPort(l.Address().Address, itoa(l.Address().Port)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := writeFull(c, []byte{4, 1, 0, 9, 127, 0, 0, 1, 0}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("handshake timeout did not cancel target dial")
+	}
+}
+
 func TestSocks5ReplyUsesIPv6BoundAddressType(t *testing.T) {
 	r := &socksConnectRequest{version: 5}
 	bound := &net.TCPAddr{IP: net.ParseIP("::1"), Port: 12345}
@@ -303,5 +334,91 @@ func TestSocks5ReplyUsesIPv6BoundAddressType(t *testing.T) {
 	if len(got) != 22 || !bytes.Equal(got[:4], []byte{5, 0, 0, 4}) ||
 		!bytes.Equal(got[4:20], bound.IP.To16()) || binary.BigEndian.Uint16(got[20:]) != uint16(bound.Port) {
 		t.Fatalf("invalid IPv6 SOCKS5 reply: %x", got)
+	}
+}
+
+func TestSocksPipelinedDataAllowsUpstreamGreeting(t *testing.T) {
+	a, b := net.Pipe()
+	defer b.Close()
+	l := &SocksListener{Iface: Endpoint{Host: "127.0.0.1", Port: "0"}, Log: testLogger(), DialContext: func(context.Context, string, string) (net.Conn, error) { return a, nil }}
+	if err := l.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer l.Stop()
+	done := make(chan error, 1)
+	payload := []byte("pipelined bytes")
+	go func() {
+		defer b.Close()
+		if err := writeFull(b, []byte("hello")); err != nil {
+			done <- err
+			return
+		}
+		got := make([]byte, len(payload))
+		if _, err := io.ReadFull(b, got); err != nil {
+			done <- err
+			return
+		}
+		if !bytes.Equal(got, payload) {
+			done <- io.ErrUnexpectedEOF
+			return
+		}
+		done <- writeFull(b, got)
+	}()
+	c, err := net.Dial("tcp", net.JoinHostPort(l.Address().Address, itoa(l.Address().Port)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(time.Second))
+	request := append([]byte{4, 1, 0, 9, 127, 0, 0, 1, 0}, payload...)
+	if err := writeFull(c, request); err != nil {
+		t.Fatal(err)
+	}
+	response := make([]byte, 8+5+len(payload))
+	if _, err := io.ReadFull(c, response); err != nil {
+		t.Fatal(err)
+	}
+	if response[1] != 0x5a || string(response[8:13]) != "hello" || !bytes.Equal(response[13:], payload) {
+		t.Fatalf("bad response: %x", response)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSocksRejectsUnsupportedCommandsWithReply(t *testing.T) {
+	l, addr := startSocksProxy(t)
+	defer l.Stop()
+	for _, tc := range []struct {
+		request []byte
+		code    byte
+	}{
+		{[]byte{5, 3, 0, 1, 127, 0, 0, 1, 0, 9}, 7},
+		{[]byte{5, 1, 0, 99}, 8},
+		{[]byte{5, 1, 0, 3, 0}, 8},
+	} {
+		c, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.SetDeadline(time.Now().Add(time.Second))
+		if err := writeFull(c, []byte{5, 1, 0}); err != nil {
+			t.Fatal(err)
+		}
+		greeting := make([]byte, 2)
+		if _, err := io.ReadFull(c, greeting); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeFull(c, tc.request); err != nil {
+			t.Fatal(err)
+		}
+		reply := make([]byte, 10)
+		if _, err := io.ReadFull(c, reply); err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
+		if reply[0] != 5 || reply[1] != tc.code {
+			t.Fatalf("reply: %x", reply)
+		}
 	}
 }

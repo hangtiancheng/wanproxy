@@ -2,6 +2,8 @@ package xcodec
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"errors"
 	"testing"
 )
 
@@ -119,8 +121,8 @@ func TestEncoderReusesCacheAcrossCalls(t *testing.T) {
 
 	second := repeatedSegment(7, 1)
 	encoded := enc.Encode(second)
-	if len(encoded) != 10 {
-		t.Fatalf("second encode length = %d, want 10 (MAGIC+REF+hash)", len(encoded))
+	if len(encoded) != RefFrameSize {
+		t.Fatalf("second encode length = %d, want REF with SHA256 tag", len(encoded))
 	}
 	if got := mustDecodeAll(t, dec, encoded); !bytes.Equal(got, second) {
 		t.Fatalf("second roundtrip mismatch")
@@ -132,7 +134,7 @@ func TestEncoderEmitsBackrefsOnlyWhenEnabled(t *testing.T) {
 
 	plain := NewEncoder(NewMemoryCache())
 	encoded := plain.Encode(input)
-	if len(encoded) != 2+SegmentLength+10 {
+	if len(encoded) != 2+SegmentLength+RefFrameSize {
 		t.Fatalf("plain encode length = %d, want EXTRACT + REF", len(encoded))
 	}
 
@@ -166,8 +168,9 @@ func TestEncoderFallsBackOnCacheCollision(t *testing.T) {
 }
 
 func TestDecoderReportsUnknownHash(t *testing.T) {
+	segment := repeatedSegment(5, 1)
 	dec := NewDecoder(NewMemoryCache())
-	res := dec.Decode(AppendFrame(nil, RefFrame(1)))
+	res := dec.Decode(AppendFrame(nil, RefFrame(1, sha256.Sum256(segment))))
 	if res.Err != nil {
 		t.Fatalf("unexpected error: %v", res.Err)
 	}
@@ -175,7 +178,6 @@ func TestDecoderReportsUnknownHash(t *testing.T) {
 		t.Fatalf("unknown = %v, want [1]", res.Unknown)
 	}
 
-	segment := repeatedSegment(5, 1)
 	res = dec.Decode(nil)
 	if len(res.Unknown) != 1 {
 		t.Fatalf("still blocked, unknown = %v", res.Unknown)
@@ -190,14 +192,31 @@ func TestDecoderReportsUnknownHash(t *testing.T) {
 	}
 }
 
+func TestRawReferenceRejectsCollidingDictionaryEntry(t *testing.T) {
+	input := bytes.Repeat([]byte{9}, SegmentLength)
+	collision := bytes.Clone(input)
+	collision[0], collision[1], collision[2] = 11, 5, 11
+	hash := HashSegment(input)
+	if hash != HashSegment(collision) {
+		t.Fatal("fixture does not collide")
+	}
+	cache := NewMemoryCache()
+	cache.Enter(hash, collision)
+	wire := AppendFrame(nil, RefFrame(hash, sha256.Sum256(input)))
+	res := NewDecoder(cache).Decode(wire)
+	if !errors.Is(res.Err, ErrIntegrity) || len(res.Output) != 0 {
+		t.Fatalf("silently decoded colliding dictionary entry: %d %v", len(res.Output), res.Err)
+	}
+}
+
 func TestDecoderSkimsAllUnknownHashes(t *testing.T) {
 	cache := NewMemoryCache()
 	dec := NewDecoder(cache)
 
 	var stream []byte
-	stream = AppendFrame(stream, RefFrame(11))
-	stream = AppendFrame(stream, RefFrame(22))
-	stream = AppendFrame(stream, RefFrame(11))
+	stream = AppendFrame(stream, RefFrame(11, [32]byte{}))
+	stream = AppendFrame(stream, RefFrame(22, [32]byte{}))
+	stream = AppendFrame(stream, RefFrame(11, [32]byte{}))
 	stream = appendEscaped(stream, []byte("tail"))
 
 	res := dec.Decode(stream)

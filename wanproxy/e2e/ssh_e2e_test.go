@@ -53,7 +53,8 @@ const sshConfigTemplate = `{
         "port": %[3]d
       },
       "peerCodec": "encode",
-      "hostKey": %[5]q
+      "hostKey": %[5]q,
+      "peerHostKeyFingerprint": %[7]q
     },
     {
       "name": "proxy1",
@@ -67,7 +68,8 @@ const sshConfigTemplate = `{
         "port": %[4]d
       },
       "interfaceCodec": "decode",
-      "hostKey": %[6]q
+      "hostKey": %[6]q,
+      "peerHostKeyFingerprint": %[7]q
     }
   ]
 }`
@@ -82,6 +84,10 @@ func TestDaemonSSHEndToEnd(t *testing.T) {
 	hostKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("generate host key: %v", err)
+	}
+	fingerprint, err := wanproxyssh.PublicKeyFingerprint(&hostKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
 	}
 	keyPath := filepath.Join(dir, "ssh-server1.pem")
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(hostKey)})
@@ -126,7 +132,7 @@ func TestDaemonSSHEndToEnd(t *testing.T) {
 
 	ports := grabDistinctPorts(t, 2)
 	confPath := filepath.Join(dir, "wanproxy.json")
-	conf := fmt.Sprintf(sshConfigTemplate, ports[0], ports[1], ports[1], echoPort, keyPath, keyPath)
+	conf := fmt.Sprintf(sshConfigTemplate, ports[0], ports[1], ports[1], echoPort, keyPath, keyPath, fingerprint)
 	if err := os.WriteFile(confPath, []byte(conf), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +171,7 @@ func TestDaemonSSHEndToEnd(t *testing.T) {
 		t.Fatalf("dial proxy0: %v", err)
 	}
 	defer clientConn.Close()
-	tr := wanproxyssh.NewTransport(clientConn, wanproxyssh.Config{Role: wanproxyssh.ClientRole})
+	tr := wanproxyssh.NewTransport(clientConn, wanproxyssh.Config{Role: wanproxyssh.ClientRole, PeerHostKeyFingerprint: fingerprint})
 	clientConn.SetDeadline(time.Now().Add(20 * time.Second))
 	if err := tr.Handshake(); err != nil {
 		t.Fatalf("client handshake: %v\n daemon output:\n%s", err, stderr.String())

@@ -1,9 +1,12 @@
 package xcodec
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 )
+
+const RefFrameSize = 2 + 8 + sha256.Size
 
 type FrameKind int
 
@@ -33,7 +36,8 @@ type Frame struct {
 
 	Segment []byte
 
-	Hash uint64
+	Hash   uint64
+	Digest [sha256.Size]byte
 
 	Index int
 }
@@ -44,8 +48,8 @@ func ExtractFrame(segment []byte) Frame {
 	return Frame{Kind: FrameExtract, Segment: segment}
 }
 
-func RefFrame(hash uint64) Frame {
-	return Frame{Kind: FrameRef, Hash: hash}
+func RefFrame(hash uint64, digest [sha256.Size]byte) Frame {
+	return Frame{Kind: FrameRef, Hash: hash, Digest: digest}
 }
 
 func BackrefFrame(index int) Frame {
@@ -66,7 +70,8 @@ func AppendFrame(output []byte, frame Frame) []byte {
 		output = append(output, Magic, OpRef)
 		var be [8]byte
 		binary.BigEndian.PutUint64(be[:], frame.Hash)
-		return append(output, be[:]...)
+		output = append(output, be[:]...)
+		return append(output, frame.Digest[:]...)
 	case FrameBackref:
 		if frame.Index < 0 || frame.Index > WindowMax {
 			panic("xcodec: backref index must be in the range 0..255")
@@ -101,10 +106,12 @@ func ReadFrame(buf []byte) (Frame, int, FrameReadStatus, error) {
 		}
 		return ExtractFrame(buf[2 : 2+SegmentLength]), 2 + SegmentLength, FrameReadOK, nil
 	case OpRef:
-		if len(buf) < 10 {
+		if len(buf) < RefFrameSize {
 			return Frame{}, 0, FrameReadNeedMore, nil
 		}
-		return RefFrame(binary.BigEndian.Uint64(buf[2:10])), 10, FrameReadOK, nil
+		var digest [sha256.Size]byte
+		copy(digest[:], buf[10:RefFrameSize])
+		return RefFrame(binary.BigEndian.Uint64(buf[2:10]), digest), RefFrameSize, FrameReadOK, nil
 	case OpBackref:
 		if len(buf) < 3 {
 			return Frame{}, 0, FrameReadNeedMore, nil

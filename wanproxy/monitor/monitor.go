@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hangtiancheng/wanproxy/wanproxy/config"
@@ -20,21 +21,29 @@ type Source interface {
 }
 
 type Server struct {
-	iface  proxy.Endpoint
-	source Source
-	server *http.Server
-	ln     net.Listener
+	mu      sync.Mutex
+	wg      sync.WaitGroup
+	stopped bool
+	iface   proxy.Endpoint
+	source  Source
+	server  *http.Server
+	ln      net.Listener
 }
 
 func NewServer(iface proxy.Endpoint, source Source) *Server {
 	s := &Server{iface: iface, source: source}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handle)
-	s.server = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	s.server = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 << 10}
 	return s
 }
 
 func (s *Server) Start() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ln != nil || s.stopped {
+		return fmt.Errorf("monitor: already started or stopped")
+	}
 	if !s.iface.Valid() {
 		return fmt.Errorf("monitor: interface endpoint is incomplete")
 	}
@@ -43,19 +52,32 @@ func (s *Server) Start() error {
 		return fmt.Errorf("monitor: %w", err)
 	}
 	s.ln = ln
-	go s.server.Serve(ln)
+	s.wg.Go(func() {
+		_ = s.server.Serve(ln)
+		s.mu.Lock()
+		s.stopped = true
+		s.mu.Unlock()
+		_ = s.server.Close()
+	})
 	return nil
 }
 
 func (s *Server) Stop() error {
+	s.mu.Lock()
+	s.stopped = true
+	s.mu.Unlock()
 	if s.server == nil {
 		return nil
 	}
-	return s.server.Close()
+	err := s.server.Close()
+	s.wg.Wait()
+	return err
 }
 
 func (s *Server) Address() *proxy.BoundAddress {
-	if s.ln == nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ln == nil || s.stopped {
 		return nil
 	}
 	addr, ok := s.ln.Addr().(*net.TCPAddr)

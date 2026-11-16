@@ -1,7 +1,7 @@
 """Validate the schema, examples and shared parser fixtures.
 
 Run with: uv run --with jsonschema python config/schema_test.py
-The daemon itself uses only the Go standard library.
+Schema validation has no daemon dependency. SSH uses golang.org/x/crypto/ssh.
 """
 
 import json

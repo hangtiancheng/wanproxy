@@ -41,7 +41,7 @@ func TestDumpFrames(t *testing.T) {
 	stream = append(stream, encodeStream(
 		xcodec.EscapeFrame,
 		xcodec.ExtractFrame(segment),
-		xcodec.RefFrame(0x0123456789abcdef),
+		xcodec.RefFrame(0x0123456789abcdef, [32]byte{}),
 		xcodec.BackrefFrame(7),
 	)...)
 	stream = append(stream, []byte("trailing raw")...)
@@ -79,7 +79,7 @@ func TestDumpFrames(t *testing.T) {
 
 func TestDumpVerbosity(t *testing.T) {
 	segment := bytes.Repeat([]byte{0x00}, xcodec.SegmentLength)
-	stream := encodeStream(xcodec.ExtractFrame(segment), xcodec.RefFrame(1))
+	stream := encodeStream(xcodec.ExtractFrame(segment), xcodec.RefFrame(1, [32]byte{}))
 
 	quiet := runDump(t, stream, 0)
 	if strings.Contains(quiet, "hash=") {

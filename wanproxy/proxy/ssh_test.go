@@ -55,13 +55,13 @@ func startSSHEchoServer(t *testing.T, hostKey *rsa.PrivateKey) string {
 	return ln.Addr().String()
 }
 
-func sshClient(t *testing.T, addr string) *wanproxyssh.Transport {
+func sshClient(t *testing.T, addr string, key *rsa.PrivateKey) *wanproxyssh.Transport {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	tr := wanproxyssh.NewTransport(conn, wanproxyssh.Config{Role: wanproxyssh.ClientRole})
+	tr := wanproxyssh.NewTransport(conn, wanproxyssh.Config{Role: wanproxyssh.ClientRole, PeerHostKeyFingerprint: sshFingerprint(t, key)})
 	conn.SetDeadline(time.Now().Add(20 * time.Second))
 	if err := tr.Handshake(); err != nil {
 		t.Fatalf("client handshake: %v", err)
@@ -101,7 +101,7 @@ func TestSSHProxyPassThrough(t *testing.T) {
 		Name:  "ssh-pass",
 		Iface: Endpoint{Family: FamilyIP, Host: "127.0.0.1", Port: "0"},
 		Peer:  endpointOf(t, echoAddr),
-		SSH:   &SSHSettings{HostKey: hostKey},
+		SSH:   &SSHSettings{HostKey: hostKey, PeerHostKeyFingerprint: sshFingerprint(t, hostKey)},
 		Log:   testLogger(),
 	}
 	if err := l.Start(); err != nil {
@@ -110,7 +110,7 @@ func TestSSHProxyPassThrough(t *testing.T) {
 	defer l.Stop()
 	addr := l.Address()
 
-	tr := sshClient(t, net.JoinHostPort(addr.Address, itoa(addr.Port)))
+	tr := sshClient(t, net.JoinHostPort(addr.Address, itoa(addr.Port)), hostKey)
 	defer tr.Close()
 
 	payload := bytes.Repeat([]byte("ssh proxy passthrough. "), 4000)
@@ -144,7 +144,7 @@ func TestSSHProxyChainWithCodec(t *testing.T) {
 		Iface:      Endpoint{Family: FamilyIP, Host: "127.0.0.1", Port: "0"},
 		Peer:       endpointOf(t, echoAddr),
 		IfaceCodec: specB,
-		SSH:        &SSHSettings{HostKey: hostKey},
+		SSH:        &SSHSettings{HostKey: hostKey, PeerHostKeyFingerprint: sshFingerprint(t, hostKey)},
 		Log:        testLogger(),
 	}
 	if err := lb.Start(); err != nil {
@@ -166,7 +166,7 @@ func TestSSHProxyChainWithCodec(t *testing.T) {
 		Iface:     Endpoint{Family: FamilyIP, Host: "127.0.0.1", Port: "0"},
 		Peer:      Endpoint{Family: FamilyIP, Host: addrB.Address, Port: itoa(addrB.Port)},
 		PeerCodec: specA,
-		SSH:       &SSHSettings{HostKey: hostKey},
+		SSH:       &SSHSettings{HostKey: hostKey, PeerHostKeyFingerprint: sshFingerprint(t, hostKey)},
 		Log:       testLogger(),
 	}
 	if err := la.Start(); err != nil {
@@ -175,7 +175,7 @@ func TestSSHProxyChainWithCodec(t *testing.T) {
 	defer la.Stop()
 	addrA := la.Address()
 
-	tr := sshClient(t, net.JoinHostPort(addrA.Address, itoa(addrA.Port)))
+	tr := sshClient(t, net.JoinHostPort(addrA.Address, itoa(addrA.Port)), hostKey)
 	defer tr.Close()
 
 	payload := bytes.Repeat([]byte("ssh wan-optimized payload! "), 8000)
@@ -211,4 +211,13 @@ func TestSSHProxyChainWithCodec(t *testing.T) {
 		t.Fatalf("B codec_to_incoming = %d, want heavy deduplication of the echo response",
 			snapB.CodecToIncoming)
 	}
+}
+
+func sshFingerprint(t *testing.T, key *rsa.PrivateKey) string {
+	t.Helper()
+	fp, err := wanproxyssh.PublicKeyFingerprint(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fp
 }

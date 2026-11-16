@@ -1,9 +1,12 @@
 # wanproxy
 
-A Go WAN optimization proxy built on Go's standard library. It includes
+A Go WAN optimization proxy using Go's standard library and
+`golang.org/x/crypto/ssh`. It includes
 XCodec deduplication, zlib composition, SSH transport, XCDFS disk caches,
 TCP/UDP forwarding, SOCKS4/5 CONNECT, monitoring, and the `tack`, `xcdump`,
 `fwdproxy` and `diskdup` tools.
+
+Requires Go 1.27.4 or newer.
 
 ## Build and run
 
@@ -34,7 +37,8 @@ validation; its path is relative to that configuration file:
       "listen": { "host": "127.0.0.1", "port": 8300 },
       "upstream": { "host": "127.0.0.1", "port": 8301 },
       "idleTimeoutSeconds": 60,
-      "maxSessions": 1024
+      "maxSessions": 1024,
+      "maxQueuedBytes": 8388608
     }
   ],
   "monitor": { "listen": { "host": "127.0.0.1", "port": 8404 } }
@@ -70,21 +74,30 @@ IPv6 are supported independently on either side. The sockets reserve a
 send buffer large enough for a complete UDP payload; network and OS limits
 still apply.
 
-Defaults are 60 seconds of inactivity and 1024 sessions per listener.
-`idleTimeoutSeconds` accepts `1..86400`, and `maxSessions` accepts
-`1..65536`. Activity in either direction refreshes a session. Idle sessions,
-including pending dials, are collected within one additional sweep interval
-(at most one second). Each session queues at most 16 outbound datagrams.
-Packets exceeding the session or queue limit are dropped; one client's
-pending dial or full queue does not stop other clients. UDP retains its
-normal loss and ordering semantics.
+Defaults are 60 seconds of inactivity, 1024 sessions, and an 8 MiB total
+outbound queue budget per listener. `idleTimeoutSeconds` accepts
+`1..86400`, `maxSessions` accepts `1..65536`, and `maxQueuedBytes` accepts
+`1..1073741824`. The byte budget spans all sessions and supplements each
+session's 16-datagram limit. Accepted activity in either direction
+refreshes a session. Idle sessions, including pending dials, are collected
+within one additional sweep interval (at most one second).
+
+Packets exceeding a session or queue limit are dropped; one client's
+pending dial or full queue does not stop other clients. Datagram writes
+have a deadline of at most one second. Session cancellation interrupts a
+blocked reply before another session uses the shared socket. Packet-size
+errors, temporary buffer exhaustion, and asynchronous ICMP errors preserve
+the session; unsuccessful sends are dropped without retry. Recoverable
+read errors use a bounded, cancellable backoff. UDP retains its normal
+loss and ordering semantics.
 
 UDP is fixed-target forwarding. Stream codecs and SSH framing are not
 applied to UDP. SOCKS listeners support TCP CONNECT; SOCKS5 UDP ASSOCIATE
 is not implemented.
 
 The monitor reports UDP session counts, successful datagram/byte totals
-in both directions, and packets dropped by the admission/queue limits.
+in both directions, queued payload bytes, and observed admission, queue,
+and send drops. These counters cannot measure packets lost in the network.
 `Stop` cancels pending dials, closes all sockets and joins workers.
 
 ### Stream codecs and caches
@@ -128,25 +141,61 @@ Declaration order does not matter; references resolve by name.
 
 Cache sizes are decimal bytes with optional case-insensitive
 `B`/`KB`/`MB`/`GB`/`TB` suffixes, using powers of 1024. A memory cache
-with omitted/zero size uses the implementation's unbounded cache;
-set an explicit size to bound it. A disk cache with omitted/zero size
+with omitted/zero size uses a 64 MiB payload budget. All peer namespaces
+and the local encoder share one LRU and one budget. Empty peer handles
+are not retained. Heap metadata is additional to the payload budget.
+A disk cache with omitted/zero size
 opens an existing volume at its current size. New volumes require a size.
 A pair cache requires `primary` and `secondary` names and derives its
 identity from the secondary. Existing disk volumes cannot be resized
-implicitly. Failed configuration loads close all acquired disk references.
+implicitly. Hard-link and symlink aliases share one volume writer.
+An exclusive OS file lock rejects competing daemon processes.
+Overflow namespaces of a full disk registry share a bounded 64 MiB memory
+fallback. Failed configuration loads close all acquired disk references.
 
 ### SSH and SOCKS
 
 An SSH proxy uses `"type":"ssh"` with an explicit `hostKey` PEM file
-(PKCS#1 RSA or PKCS#8). It runs the SSH server transport on the listen
-side and the SSH client transport on the upstream side. Codec slots
-work as for TCP. There is no implicit host-key filename.
+(PKCS#1 RSA or PKCS#8, at least 2048 bits) and a required
+`peerHostKeyFingerprint` containing the upstream server's OpenSSH SHA256
+public-key fingerprint. A missing or mismatched pin fails the handshake.
+Obtain the fingerprint from the upstream's trusted key:
+
+```sh
+ssh-keygen -y -f upstream-hostkey.pem > upstream-hostkey.pub
+ssh-keygen -lf upstream-hostkey.pub -E sha256
+```
+
+SSH uses the maintained Go SSH implementation with its supported
+algorithms, excluding its insecure algorithm set. Each connection carries
+one raw stream in a `wanproxy-stream` channel; other channels and requests
+are rejected. Codec slots work as for TCP. SSH listeners accept clients
+without client credentials, as TCP listeners do; the pin authenticates the
+upstream server. The demo renderer derives pins from its generated host key.
 
 A SOCKS proxy uses `"type":"socks"` with a `listen` endpoint and no
 `upstream` or codec slots. It supports SOCKS4 and SOCKS5 no-auth CONNECT,
 with success sent after a successful target dial. SSH and SOCKS accept
 `handshakeTimeoutSeconds` in `1..86400`, defaulting to 15 seconds.
-SOCKS4A, BIND and UDP ASSOCIATE are not supported.
+SOCKS4A, BIND and UDP ASSOCIATE are not supported. Unsupported commands
+receive failure replies. Handshake timeouts cover target dialing too.
+Pipelined bytes enter the normal duplex relay, allowing an upstream
+greeting to progress concurrently.
+
+TCP, SSH and SOCKS listeners admit at most 1024 concurrent clients by
+default. Set `maxConnections` in `1..65536` to change the limit;
+connections above the limit are closed. UDP uses `maxSessions` instead.
+
+The SSH wire format and XCodec session protocol require a coordinated
+upgrade of all proxy nodes. XCodec pipe protocol version 2 rejects older
+HELLO messages. Each data frame includes its plaintext length and SHA256
+digest, verified before any plaintext from that frame is delivered. This
+detects corrupted cache entries and rolling-hash collisions; it is an
+integrity check, not peer authentication. Reference frames also carry SHA256 tags, so raw codecs and offline
+`tack` dictionaries reject colliding or corrupted cached segments.
+The raw `tack`/`xcdump` format also requires upgrading; existing encoded
+files containing references must be regenerated. Rolling-hash vectors
+remain unchanged.
 
 ## Monitor
 
@@ -175,7 +224,7 @@ stream codecs or a monitor.
 `proxy/` owns stream relays, UDP sessions, listeners and fleet lifecycle.
 `pipeline/` composes zlib and XCodec transforms. `xcodec/` contains the hash,
 frame codec, bounded pipe sessions and memory/disk caches. `ssh/` implements
-SSH-2 transport. `config/` loads JSON, resolves named resources and owns
+the single-channel SSH adapter. `config/` loads JSON, resolves named resources and owns
 disk handles. `monitor/` exports configuration and runtime status.
 
 Stream relays give socket reads, application forwarding and protocol
@@ -203,5 +252,5 @@ make schema
 ```
 
 Schema tests validate the schema itself, all example configurations and
-fixtures shared with the Go parser tests. The daemon has no third-party
-runtime dependencies.
+fixtures shared with the Go parser tests. SSH depends on the Go project's
+`golang.org/x/crypto/ssh` implementation.

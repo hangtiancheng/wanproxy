@@ -5,13 +5,13 @@ the web front-end that drives it.
 
 | Directory   | What it is                                                                                                                                                                                                                      |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wanproxy/` | **Go proxy** — xcodec dedup codec, pipe protocol, zlib, SSH transport, XCDFS disk cache, TCP/UDP/SOCKS/SSH proxies, JSON configuration and schema, monitor, `tack`/`xcdump`/`fwdproxy` tools. Built on the Go standard library. |
+| `wanproxy/` | **Go proxy** — xcodec dedup codec, pipe protocol, zlib, SSH transport, XCDFS disk cache, TCP/UDP/SOCKS/SSH proxies, JSON configuration and schema, monitor, `tack`/`xcdump`/`fwdproxy` tools. Uses the Go standard library and `golang.org/x/crypto/ssh`. |
 | `srv/`      | **Go SRV** (yukino_http) — spawns the wanproxy fleet and SSH echo, and serves the file/monitor/bench/experiment/tools APIs.                                                                                                     |
 | `web/`      | React + TailwindCSS demo front-end.                                                                                                                                                                                             |
 
 ## Demo quickstart
 
-Prerequisites: Go ≥ 1.26; Node ≥ 20 and pnpm for the web front-end.
+Prerequisites: Go ≥ 1.27.4; Node ≥ 20 and pnpm for the web front-end.
 
 ```sh
 make install     # installs web dependencies and builds the Go backend

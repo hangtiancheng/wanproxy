@@ -124,3 +124,62 @@ func TestRelayContextCancellation(t *testing.T) {
 		t.Fatal("relay did not stop")
 	}
 }
+
+func TestStreamConnectionLimitAndReclamation(t *testing.T) {
+	var state listenerState
+	entered := make(chan net.Conn, 2)
+	if err := state.start(Endpoint{Host: "127.0.0.1", Port: "0"}, testLogger(), "limited", 1, func(c net.Conn) {
+		defer state.drop(c)
+		entered <- c
+		_, _ = c.Read(make([]byte, 1))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer state.Stop()
+	dial := func() net.Conn {
+		t.Helper()
+		addr := state.Address()
+		c, err := net.Dial("tcp", net.JoinHostPort(addr.Address, itoa(addr.Port)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close() })
+		return c
+	}
+	first := dial()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("first client not admitted")
+	}
+	second := dial()
+	second.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := second.Read(make([]byte, 1)); err == nil {
+		t.Fatal("over-limit connection admitted")
+	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatal("over-limit connection was left open")
+	}
+	first.Close()
+	eventuallyUDP(t, func() bool { state.mu.Lock(); defer state.mu.Unlock(); return state.activeClients == 0 })
+	_ = dial()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("connection capacity not reclaimed")
+	}
+}
+
+func TestUnexpectedStreamListenerCloseCleansUp(t *testing.T) {
+	var state listenerState
+	if err := state.start(Endpoint{Host: "127.0.0.1", Port: "0"}, testLogger(), "closed", 1, func(c net.Conn) { state.drop(c) }); err != nil {
+		t.Fatal(err)
+	}
+	state.listener.Close()
+	eventuallyUDP(t, func() bool { return !state.Listening() })
+	if state.Address() != nil {
+		t.Fatal("closed listener retained address")
+	}
+	if err := state.Stop(); err != nil {
+		t.Fatal(err)
+	}
+}

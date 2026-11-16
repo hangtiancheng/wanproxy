@@ -76,3 +76,16 @@ func TestWindowPresentVerifiesData(t *testing.T) {
 		t.Fatalf("present must succeed for matching data")
 	}
 }
+
+func TestWindowAcceptsZeroHash(t *testing.T) {
+	w := NewWindow()
+	seg := repeatedSegment(42, 1)
+	w.Declare(0, seg)
+	if !bytes.Equal(w.Dereference(0), seg) {
+		t.Fatal("zero hash confused with an empty slot")
+	}
+	w.Declare(1, seg)
+	if !bytes.Equal(w.Dereference(0), seg) {
+		t.Fatal("zero-hash slot lost")
+	}
+}

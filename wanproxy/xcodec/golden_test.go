@@ -21,7 +21,7 @@ func TestGoldenXCodecFrames(t *testing.T) {
 		hex   string
 	}{
 		"escape":  {EscapeFrame, "f100"},
-		"ref":     {RefFrame(0x0123456789abcdef), "f1020123456789abcdef"},
+		"ref":     {RefFrame(0x0123456789abcdef, [32]byte{}), "f1020123456789abcdef0000000000000000000000000000000000000000000000000000000000000000"},
 		"backref": {BackrefFrame(7), "f10307"},
 	}
 	for name, tc := range cases {
@@ -42,8 +42,8 @@ func TestGoldenPipeFrames(t *testing.T) {
 		build func([]byte) []byte
 		hex   string
 	}{
-		"hello":   {func(b []byte) []byte { return AppendHello(b, id) }, "ff10000102030405060708090a0b0c0d0e0f"},
-		"frame":   {func(b []byte) []byte { return AppendPipeFrame(b, []byte{1, 2, 3}) }, "0200000003010203"},
+		"hello":   {func(b []byte) []byte { return AppendHello(b, id) }, "ff0210000102030405060708090a0b0c0d0e0f"},
+		"frame":   {func(b []byte) []byte { return AppendPipeFrame(b, []byte{1, 2, 3}, []byte{1, 2, 3}) }, "020000000300000003039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81010203"},
 		"ask":     {func(b []byte) []byte { return AppendAsk(b, []uint64{0x0123456789abcdef}) }, "f000010123456789abcdef"},
 		"advance": {func(b []byte) []byte { return AppendAdvance(b, 3) }, "0100000003"},
 		"eos":     {AppendEOS, "fc"},
@@ -64,7 +64,7 @@ func TestGoldenSessionExchange(t *testing.T) {
 	}
 	s := NewSession(NewMemoryCache(), WithSessionID(id))
 	got := mustEncode(t, s, []byte("WANProxy"))
-	want := "ff10a0a1a2a3a4a5a6a7a8a9aaabacadaeaf020000000857414e50726f7879"
+	want := "ff0210a0a1a2a3a4a5a6a7a8a9aaabacadaeaf020000000800000008bcc8c638b3a55cf611b954f34ea1dabd0e65d0b61ddfbc41c24641c03549135c57414e50726f7879"
 	if !bytes.Equal(got, mustHex(t, want)) {
 		t.Fatalf("session exchange: got %x, want %s", got, want)
 	}
@@ -93,7 +93,7 @@ func TestPipeFrameReadRoundtrip(t *testing.T) {
 		case PipeFrameHello:
 			wire = AppendHello(wire, f.ID)
 		case PipeFrameFrame:
-			wire = AppendPipeFrame(wire, f.Payload)
+			wire = AppendPipeFrame(wire, f.Payload, f.Payload)
 		case PipeFrameAsk:
 			wire = AppendAsk(wire, f.Hashes)
 		case PipeFrameLearn:

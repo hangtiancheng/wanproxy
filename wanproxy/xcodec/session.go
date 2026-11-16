@@ -1,7 +1,9 @@
 package xcodec
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +20,16 @@ const (
 var ErrBackpressure = errors.New("xcodec: in-flight window is full")
 
 var ErrSessionLimit = errors.New("xcodec: session buffer limit exceeded")
+var ErrIntegrity = errors.New("xcodec: plaintext frame integrity check failed")
+
+type receiveFrame struct {
+	payload     []byte
+	plainLength uint32
+	digest      [sha256.Size]byte
+	output      []byte
+	started     bool
+	encodedSize int
+}
 
 type referenceFrame struct {
 	refs map[uint64][]byte
@@ -59,8 +71,8 @@ type Session struct {
 	learned        *learnedCache
 	peerID         CacheID
 	decBuffer      []byte
-	frameBuffer    []byte
-	frameLengths   []uint64
+	receiveFrames  []receiveFrame
+	receiveBytes   int
 	unknown        map[uint64]bool
 	decEOSReceived bool
 	decEOSAckSent  bool
@@ -170,7 +182,7 @@ func (s *Session) encodeData(p []byte) ([]byte, error) {
 		s.refFrames = append(s.refFrames, referenceFrame{refs: refs, size: len(chunk)})
 		s.inFlightBytes += len(chunk)
 
-		output = AppendPipeFrame(output, encoded)
+		output = AppendPipeFrame(output, encoded, chunk)
 	}
 
 	return output, nil
@@ -198,14 +210,14 @@ func (s *Session) CloseWrite() ([]byte, error) {
 func (s *Session) HasPending() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.decBuffer) > 0 || len(s.frameBuffer) > 0 ||
+	return len(s.decBuffer) > 0 || len(s.receiveFrames) > 0 ||
 		(s.dec != nil && s.dec.Buffered() > 0)
 }
 
 func (s *Session) FinishReceive() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.done || len(s.decBuffer) > 0 || len(s.frameBuffer) > 0 ||
+	if !s.done || len(s.decBuffer) > 0 || len(s.receiveFrames) > 0 ||
 		(s.dec != nil && s.dec.Buffered() > 0) {
 		return io.ErrUnexpectedEOF
 	}
@@ -251,16 +263,23 @@ func (s *Session) Receive(p []byte) (ReceiveResult, error) {
 		}
 	}
 
-	if s.dec != nil && len(s.unknown) == 0 && (len(s.frameBuffer) > 0 || s.dec.Buffered() > 0) {
-		res := s.dec.Decode(s.frameBuffer)
-		s.frameBuffer = nil
-		result.Output = append(result.Output, res.Output...)
+	for len(s.receiveFrames) > 0 && len(s.unknown) == 0 {
+		head := &s.receiveFrames[0]
+		remaining := int(head.plainLength) - len(head.output)
+		if remaining <= 0 {
+			return result, ErrIntegrity
+		}
+		s.dec.outputLimit = remaining
+		var data []byte
+		if !head.started {
+			data = head.payload
+			head.payload = nil
+			head.started = true
+		}
+		res := s.dec.Decode(data)
+		head.output = append(head.output, res.Output...)
 		if res.Err != nil {
 			return result, res.Err
-		}
-
-		if err := s.advanceFrames(res.Consumed, &result); err != nil {
-			return result, err
 		}
 
 		if len(res.Unknown) > 0 {
@@ -279,13 +298,26 @@ func (s *Session) Receive(p []byte) (ReceiveResult, error) {
 				}
 				result.Responses = AppendAsk(result.Responses, hashes[i:end])
 			}
+			break
 		}
-		if s.dec.Buffered() == 0 && len(s.unknown) == 0 {
-			clear(s.learned.segments)
+		if s.dec.Buffered() != 0 {
+			return result, ErrIncompleteStream
 		}
+		if len(head.output) != int(head.plainLength) || sha256.Sum256(head.output) != head.digest {
+			return result, ErrIntegrity
+		}
+		if len(head.output) > maxReceiveBytes-len(result.Output) {
+			return result, ErrSessionLimit
+		}
+		result.Output = append(result.Output, head.output...)
+		s.receiveBytes -= head.encodedSize
+		*head = receiveFrame{}
+		s.receiveFrames = s.receiveFrames[1:]
+		result.Responses = AppendAdvance(result.Responses, 1)
+		clear(s.learned.segments)
 	}
 
-	if len(s.decBuffer) > 0 || (s.dec != nil && s.dec.Buffered() > 0) {
+	if len(s.decBuffer) > 0 || len(s.receiveFrames) > 0 {
 		return result, nil
 	}
 
@@ -309,6 +341,9 @@ func (s *Session) Receive(p []byte) (ReceiveResult, error) {
 func (s *Session) handleControlFrame(frame PipeFrame, result *ReceiveResult) error {
 	switch frame.Kind {
 	case PipeFrameHello:
+		if frame.ID == (CacheID{}) {
+			return errors.New("xcodec: zero peer cache identity")
+		}
 		if s.decCache != nil {
 			return errors.New("xcodec: got <HELLO> twice")
 		}
@@ -325,15 +360,18 @@ func (s *Session) handleControlFrame(frame PipeFrame, result *ReceiveResult) err
 		if s.decEOSReceived {
 			return errors.New("xcodec: got frame data after <EOS>")
 		}
-		if len(s.frameLengths) >= maxInFlightFrames || len(frame.Payload) > maxReceiveBytes-len(s.frameBuffer)-s.dec.Buffered() {
+		if len(s.receiveFrames) >= maxInFlightFrames || len(frame.Payload) > maxReceiveBytes-s.receiveBytes {
 			return ErrSessionLimit
 		}
-		s.frameLengths = append(s.frameLengths, uint64(len(frame.Payload)))
-		s.frameBuffer = append(s.frameBuffer, frame.Payload...)
+		s.receiveFrames = append(s.receiveFrames, receiveFrame{payload: bytes.Clone(frame.Payload), plainLength: frame.PlainLength, digest: frame.Digest, encodedSize: len(frame.Payload)})
+		s.receiveBytes += len(frame.Payload)
 
 	case PipeFrameAsk:
 		if s.enc == nil {
 			return errors.New("xcodec: got <ASK> before sending <HELLO>")
+		}
+		if 3+len(frame.Hashes)*SegmentLength > maxReceiveBytes-len(result.Responses) {
+			return ErrSessionLimit
 		}
 		segments := make([][]byte, 0, len(frame.Hashes))
 		for _, hash := range frame.Hashes {
@@ -373,10 +411,10 @@ func (s *Session) handleControlFrame(frame PipeFrame, result *ReceiveResult) err
 		if s.enc == nil {
 			return errors.New("xcodec: got <ADVANCE> before sending <HELLO>")
 		}
-		count := int(frame.Count)
-		if count > len(s.refFrames) {
-			return fmt.Errorf("xcodec: invalid frame advance count %d", count)
+		if uint64(frame.Count) > uint64(len(s.refFrames)) {
+			return fmt.Errorf("xcodec: invalid frame advance count %d", frame.Count)
 		}
+		count := int(frame.Count)
 		for i := 0; i < count; i++ {
 			s.inFlightBytes -= s.refFrames[i].size
 			s.refFrames[i] = referenceFrame{}
@@ -405,29 +443,6 @@ func (s *Session) handleControlFrame(frame PipeFrame, result *ReceiveResult) err
 			return errors.New("xcodec: got <EOS_ACK> with unacknowledged frames")
 		}
 		s.encEOSAckReceived = true
-	}
-	return nil
-}
-
-func (s *Session) advanceFrames(consumed int, result *ReceiveResult) error {
-	if consumed < 0 {
-		return errors.New("xcodec: negative frame consumption")
-	}
-	remaining := uint64(consumed)
-	var advance uint32
-	for len(s.frameLengths) > 0 && remaining > 0 {
-		head := s.frameLengths[0]
-		if remaining < head {
-			s.frameLengths[0] = head - remaining
-			remaining = 0
-			break
-		}
-		remaining -= head
-		advance++
-		s.frameLengths = s.frameLengths[1:]
-	}
-	if advance > 0 {
-		result.Responses = AppendAdvance(result.Responses, advance)
 	}
 	return nil
 }

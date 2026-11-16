@@ -1,0 +1,18 @@
+{
+  "proxies": [
+    {
+      "name": "udp",
+      "type": "ssh",
+      "listen": {
+        "host": "127.0.0.1",
+        "port": 0
+      },
+      "upstream": {
+        "host": "127.0.0.1",
+        "port": 9
+      },
+      "hostKey": "unused.pem",
+      "peerHostKeyFingerprint": "SHA256:invalid"
+    }
+  ]
+}
