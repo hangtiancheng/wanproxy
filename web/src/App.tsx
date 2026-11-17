@@ -28,11 +28,11 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { Dashboard } from "@/pages/Dashboard";
-import { Experiment } from "@/pages/Experiment";
-import { Files } from "@/pages/Files";
-import { Scenarios } from "@/pages/Scenarios";
-import { Inspector } from "@/pages/Inspector";
+import { Dashboard } from "@/pages/dashboard";
+import { Experiment } from "@/pages/experiment";
+import { Files } from "@/pages/files";
+import { Scenarios } from "@/pages/scenarios";
+import { Inspector } from "@/pages/inspector";
 
 const nav = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
