@@ -1,30 +1,30 @@
 # WANProxy workspace
 
 This workspace holds the Go WAN optimization proxy, the demo backend and
-the web front-end that drives it.
+the client front-end that drives it.
 
 | Directory   | What it is                                                                                                                                                                                                                      |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `wanproxy/` | **Go proxy** — xcodec dedup codec, pipe protocol, zlib, SSH transport, XCDFS disk cache, TCP/UDP/SOCKS/SSH proxies, JSON configuration and schema, monitor, `tack`/`xcdump`/`fwdproxy` tools. Uses the Go standard library and `golang.org/x/crypto/ssh`. |
-| `srv/`      | **Go SRV** (yukino_http) — spawns the wanproxy fleet and SSH echo, and serves the file/monitor/bench/experiment/tools APIs.                                                                                                     |
-| `web/`      | React + TailwindCSS demo front-end.                                                                                                                                                                                             |
+| `server/`   | **Go server** (yukino_http) — spawns the wanproxy fleet and SSH echo, and serves the file/monitor/bench/experiment/tools APIs.                                                                                                     |
+| `client/`   | React + TailwindCSS demo front-end.                                                                                                                                                                                             |
 
 ## Demo quickstart
 
-Prerequisites: Go ≥ 1.27.4; Node ≥ 20 and pnpm for the web front-end.
+Prerequisites: Go ≥ 1.27.4; Node ≥ 20 and pnpm for the client front-end.
 
 ```sh
-make install     # installs web dependencies and builds the Go backend
-make dev         # SRV (:3101) + web (:5173), foreground
+make install     # installs client dependencies and builds the Go backend
+make dev         # server (:3101) + client (:5173), foreground
 ```
 
 Open http://localhost:5173. `make start` / `make stop` run the same stack in
-the background (logs and pidfiles under `srv/data/`); `make help` lists
-every target. `make srv` runs only the backend, and `make web` runs only the
-front-end. All targets forward to `srv/cmd/stack`, a cross-platform Go
+the background (logs and pidfiles under `server/data/`); `make help` lists
+every target. `make server` runs only the backend, and `make client` runs only the
+front-end. All targets forward to `server/cmd/stack`, a cross-platform Go
 orchestrator.
 
-On first boot the SRV renders its `demo/wanproxy.example.json`, builds the
+On first boot the server renders its `demo/wanproxy.example.json`, builds the
 proxy if needed, and spawns the proxy fleet with an HTTP monitor on `:9901`
 plus an SSH echo server on `:8349`.
 
@@ -37,7 +37,7 @@ plus an SSH echo server on `:8349`.
   deterministic payloads, with per-iteration warm-up curves, wire-byte
   verdicts vs baseline, and fleet cache cold-restart control.
 - **Files** — generate test payloads (mixed / repeat / text / random
-  patterns), upload them through the SRV (raw octet-stream, sha256
+  patterns), upload them through the server (raw octet-stream, sha256
   verified), download with HTTP Range support (video seeking), and
   preview video in-browser.
 - **Scenarios** — one-click benchmarks across the transfer matrix:
@@ -58,8 +58,8 @@ experiments report real wire savings.
 
 | Port               | Role                                           |
 | ------------------ | ---------------------------------------------- |
-| 5173               | Vite dev server (web)                          |
-| 3101               | SRV (`srv`)                                    |
+| 5173               | Vite dev server (client)                       |
+| 3101               | server (`server/`)                            |
 | 9901               | wanproxy daemon HTTP monitor                   |
 | 8310 / 8311 / 8312 | passthrough / zlib / xcodec single-hop proxies |
 | 8320 → 8321        | WAN chain (wan-a → wan-b, xcodec dedup)        |
@@ -71,7 +71,7 @@ experiments report real wire savings.
 
 - Go proxy: [`wanproxy/README.md`](wanproxy/README.md) — package layout,
   configuration and schema, architecture, and verification.
-- Go SRV: [`srv/README.md`](srv/README.md) — the HTTP API, demo fleet
+- Go server: [`server/README.md`](server/README.md) — the HTTP API, demo fleet
   lifecycle, and benchmark/experiment orchestration.
-- Web dashboard: [`web/README.md`](web/README.md) — pages, development
+- Client dashboard: [`client/README.md`](client/README.md) — pages, development
   commands, and theming.

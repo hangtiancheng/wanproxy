@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 importers:
-  web:
+  client:
     dependencies:
       "@base-ui/react":
         specifier: ^1.9.0

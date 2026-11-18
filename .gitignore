@@ -173,6 +173,6 @@ target
 **/.yukino/
 
 .playwright-cli/
-srv/data
+server/data
 
 tsconfig.build.tsbuildinfo

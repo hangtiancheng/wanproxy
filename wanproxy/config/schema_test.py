@@ -24,7 +24,7 @@ class SchemaTests(unittest.TestCase):
         paths = [
             *ROOT.parent.joinpath("examples").glob("*.json"),
             ROOT.parent / "wanproxy.example.json",
-            ROOT.parent.parent / "srv" / "demo" / "wanproxy.example.json",
+            ROOT.parent.parent / "server" / "demo" / "wanproxy.example.json",
         ]
         for path in paths:
             with self.subTest(path=path.name):

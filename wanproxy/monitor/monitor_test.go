@@ -17,26 +17,26 @@ import (
 type fakeSource struct{}
 
 func TestMonitorLifecycle(t *testing.T) {
-	srv := NewServer(proxy.Endpoint{Host: "127.0.0.1", Port: "0"}, &fakeSource{})
-	if err := srv.Start(); err != nil {
+	server := NewServer(proxy.Endpoint{Host: "127.0.0.1", Port: "0"}, &fakeSource{})
+	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.Start(); err == nil {
+	if err := server.Start(); err == nil {
 		t.Fatal("started monitor twice")
 	}
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Go(func() {
-			if err := srv.Stop(); err != nil {
+			if err := server.Stop(); err != nil {
 				t.Error(err)
 			}
 		})
 	}
 	wg.Wait()
-	if srv.Address() != nil {
+	if server.Address() != nil {
 		t.Fatal("stopped monitor retained address")
 	}
-	if err := srv.Start(); err == nil {
+	if err := server.Start(); err == nil {
 		t.Fatal("restarted closed monitor")
 	}
 }
@@ -86,12 +86,12 @@ func (f *fakeSource) Status() proxy.FleetStatus {
 }
 
 func TestMonitorEndpoints(t *testing.T) {
-	srv := NewServer(proxy.Endpoint{Family: proxy.FamilyIP, Host: "127.0.0.1", Port: "0"}, &fakeSource{})
-	if err := srv.Start(); err != nil {
+	server := NewServer(proxy.Endpoint{Family: proxy.FamilyIP, Host: "127.0.0.1", Port: "0"}, &fakeSource{})
+	if err := server.Start(); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	defer srv.Stop()
-	addr := srv.Address()
+	defer server.Stop()
+	addr := server.Address()
 	base := "http://127.0.0.1:" + portString(addr.Port)
 
 	t.Run("status json", func(t *testing.T) {
